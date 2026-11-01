@@ -590,8 +590,37 @@ class KennyApp {
   }
 
   // --------------------------------------------------------------------------
-  // Modal 1: 新增 / 編輯 Vault 資料
+  // Modal 1: 新增 / 編輯 Vault 資料（支援多檔案上傳、勾選刪除指定檔案）
   // --------------------------------------------------------------------------
+  getNormalizedItemFiles(item) {
+    if (!item) return [];
+    if (Array.isArray(item.files) && item.files.length > 0) {
+      return item.files.map((f, idx) => ({
+        id: f.id || `file_${idx}_${Date.now()}`,
+        name: f.name || item.file_name || '未命名檔案',
+        size: f.size || 0,
+        type: f.type || '',
+        url: f.url || '',
+        data: f.data || '',
+        checked: false
+      }));
+    }
+    if (item.file_name || item.file_data || (item.type === 'file' && item.url)) {
+      return [
+        {
+          id: 'file_primary_0',
+          name: item.file_name || item.title || '附件檔案',
+          size: item.file_size || 0,
+          type: item.file_type || '',
+          url: item.type === 'file' ? item.url || '' : '',
+          data: item.file_data || '',
+          checked: false
+        }
+      ];
+    }
+    return [];
+  }
+
   openVaultModal(itemId = null) {
     const domains = this.store.getDomains();
     const domSelect = document.getElementById('vaultItemDomain');
@@ -600,14 +629,15 @@ class KennyApp {
       .join('');
 
     this.pendingFileUpload = null;
+    this.modalFiles = [];
     document.getElementById('vaultItemFileInput').value = '';
-    document.getElementById('vaultFileCurrentInfo').textContent = '';
 
     if (itemId) {
       const item = this.store.getVaultItems().find((i) => i.id === itemId);
       if (!item) return;
       document.getElementById('vaultModalTitle').textContent = '編輯知識庫資料';
       document.getElementById('vaultItemId').value = item.id;
+      this.modalFiles = this.getNormalizedItemFiles(item);
       this.selectVaultModalType(item.type);
       document.getElementById('vaultItemTitle').value = item.title || '';
       document.getElementById('vaultItemUrl').value = item.url || '';
@@ -616,12 +646,10 @@ class KennyApp {
       document.getElementById('vaultItemTags').value = (item.tags || []).join(', ');
       document.getElementById('vaultItemStarred').checked = !!item.is_starred;
       document.getElementById('vaultItemInbox').checked = !!item.is_inbox;
-      if (item.file_name) {
-        document.getElementById('vaultFileCurrentInfo').textContent = `目前已附加檔案：${item.file_name} (${((item.file_size || 0) / 1024).toFixed(1)} KB)`;
-      }
     } else {
       document.getElementById('vaultModalTitle').textContent = '新增資料至校長知識庫';
       document.getElementById('vaultItemId').value = '';
+      this.modalFiles = [];
       this.selectVaultModalType('snippet');
       document.getElementById('vaultItemTitle').value = '';
       document.getElementById('vaultItemUrl').value = '';
@@ -634,6 +662,7 @@ class KennyApp {
       document.getElementById('vaultItemInbox').checked = this.currentNav === 'inbox';
     }
 
+    this.renderModalFileList();
     document.getElementById('vaultModal').classList.add('open');
   }
 
@@ -648,18 +677,151 @@ class KennyApp {
       if (btn) btn.classList.toggle('btn-primary', t === type);
     });
     document.getElementById('vaultUrlGroup').style.display = type === 'link' ? 'flex' : 'none';
-    document.getElementById('vaultFileGroup').style.display = type === 'file' ? 'flex' : 'none';
+    // 當選擇「檔案附件上傳」或該項目已有附加檔案時，顯示檔案管理區塊
+    const hasFiles = Array.isArray(this.modalFiles) && this.modalFiles.length > 0;
+    document.getElementById('vaultFileGroup').style.display =
+      type === 'file' || hasFiles ? 'flex' : 'none';
   }
 
-  handleModalFileSelect(event) {
-    const file = event.target.files && event.target.files[0];
-    if (!file) return;
-    this.pendingFileUpload = file;
+  async handleModalFileSelect(event) {
+    const fileList = event.target.files ? Array.from(event.target.files) : [];
+    if (fileList.length === 0) return;
+
+    this.modalFiles = this.modalFiles || [];
     const titleInput = document.getElementById('vaultItemTitle');
     if (!titleInput.value.trim()) {
-      titleInput.value = file.name;
+      titleInput.value = fileList[0].name;
     }
-    document.getElementById('vaultFileCurrentInfo').textContent = `待儲存檔案：${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+    for (const file of fileList) {
+      const uploaded = await this.store.uploadFile(file);
+      this.modalFiles.push({
+        id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        url: uploaded.url || '',
+        data: uploaded.file_data || '',
+        checked: false
+      });
+    }
+
+    event.target.value = '';
+    this.renderModalFileList();
+    this.showToast(`📎 已加入 ${fileList.length} 個檔案至清單（可勾選管理或刪除）`);
+  }
+
+  renderModalFileList() {
+    const container = document.getElementById('vaultFileListContainer');
+    const batchBar = document.getElementById('vaultFileBatchActions');
+    if (!container) return;
+
+    this.modalFiles = this.modalFiles || [];
+    if (batchBar) {
+      batchBar.style.display = this.modalFiles.length > 0 ? 'flex' : 'none';
+    }
+
+    if (this.modalFiles.length === 0) {
+      container.innerHTML = `
+        <div style="font-size: 12px; color: var(--text-muted); padding: 8px 10px; background: var(--bg-app); border: 1px dashed var(--border-color); border-radius: var(--radius-sm);">
+          目前尚無附加檔案。請點擊上方「選擇檔案」上傳（可一次選取或分批加入多個檔案）。
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = this.modalFiles
+      .map(
+        (f, idx) => `
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+          <label style="display: flex; align-items: center; gap: 8px; flex: 1; cursor: pointer; overflow: hidden;">
+            <input
+              type="checkbox"
+              ${f.checked ? 'checked' : ''}
+              onchange="app.toggleModalFileCheck(${idx}, this.checked)"
+              style="width: 15px; height: 15px; accent-color: #dc2626; cursor: pointer;"
+            />
+            <span style="font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              📎 ${this.escapeHtml(f.name)}
+            </span>
+            <span style="font-size: 11.5px; color: var(--text-muted); white-space: nowrap;">
+              (${((f.size || 0) / 1024).toFixed(1)} KB)
+            </span>
+          </label>
+          <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+            ${
+              f.url || f.data
+                ? `<button type="button" class="btn btn-sm" onclick="app.downloadModalFile(${idx})" title="下載此檔案">⬇️ 下載</button>`
+                : ''
+            }
+            <button
+              type="button"
+              class="btn btn-sm"
+              style="color: #dc2626; border-color: #fecaca; background: #fef2f2;"
+              onclick="app.deleteSingleModalFile(${idx})"
+              title="刪除此檔案"
+            >
+              🗑️ 刪除
+            </button>
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  toggleModalFileCheck(idx, isChecked) {
+    if (this.modalFiles && this.modalFiles[idx]) {
+      this.modalFiles[idx].checked = isChecked;
+    }
+  }
+
+  toggleSelectAllModalFiles() {
+    if (!this.modalFiles || this.modalFiles.length === 0) return;
+    const allChecked = this.modalFiles.every((f) => f.checked);
+    this.modalFiles.forEach((f) => {
+      f.checked = !allChecked;
+    });
+    this.renderModalFileList();
+  }
+
+  deleteSelectedModalFiles() {
+    if (!this.modalFiles || this.modalFiles.length === 0) return;
+    const checkedCount = this.modalFiles.filter((f) => f.checked).length;
+    if (checkedCount === 0) {
+      alert('請先勾選您要刪除的檔案！');
+      return;
+    }
+    if (!confirm(`確定要刪除已勾選的 ${checkedCount} 個檔案嗎？`)) return;
+    this.modalFiles = this.modalFiles.filter((f) => !f.checked);
+    this.renderModalFileList();
+    this.showToast(`🗑️ 已移除所選的 ${checkedCount} 個檔案（點擊「儲存資料」即生效）`);
+  }
+
+  deleteSingleModalFile(idx) {
+    if (!this.modalFiles || !this.modalFiles[idx]) return;
+    const targetName = this.modalFiles[idx].name;
+    if (!confirm(`確定要刪除檔案「${targetName}」嗎？`)) return;
+    this.modalFiles.splice(idx, 1);
+    this.renderModalFileList();
+    this.showToast(`🗑️ 已移除檔案「${targetName}」（點擊「儲存資料」即生效）`);
+  }
+
+  downloadModalFile(idx) {
+    if (!this.modalFiles || !this.modalFiles[idx]) return;
+    const f = this.modalFiles[idx];
+    const href = f.url || f.data;
+    if (!href) {
+      alert('此檔案尚無可下載的實體內容');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = f.name || 'download';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   async saveVaultModal() {
@@ -671,19 +833,34 @@ class KennyApp {
       return;
     }
 
-    let url = document.getElementById('vaultItemUrl').value.trim();
-    let file_name = existing.file_name || '';
-    let file_size = existing.file_size || 0;
-    let file_type = existing.file_type || '';
-    let file_data = existing.file_data || '';
+    const cleanFiles = (this.modalFiles || []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      url: f.url,
+      data: f.data
+    }));
 
-    if (this.modalCurrentType === 'file' && this.pendingFileUpload) {
-      const uploaded = await this.store.uploadFile(this.pendingFileUpload);
-      url = uploaded.url || url;
-      file_data = uploaded.file_data || '';
-      file_name = this.pendingFileUpload.name;
-      file_size = this.pendingFileUpload.size;
-      file_type = this.pendingFileUpload.type || 'application/octet-stream';
+    let url = document.getElementById('vaultItemUrl').value.trim();
+    let file_name = '';
+    let file_size = 0;
+    let file_type = '';
+    let file_data = '';
+
+    if (cleanFiles.length > 0) {
+      file_name =
+        cleanFiles.length === 1
+          ? cleanFiles[0].name
+          : `${cleanFiles[0].name} 等 ${cleanFiles.length} 個檔案`;
+      file_size = cleanFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+      file_type = cleanFiles[0].type || 'application/octet-stream';
+      file_data = cleanFiles[0].data || '';
+      if (this.modalCurrentType === 'file' && !url) {
+        url = cleanFiles[0].url || '';
+      }
+    } else if (this.modalCurrentType === 'file') {
+      url = '';
     }
 
     const tags = document
@@ -703,6 +880,7 @@ class KennyApp {
       file_size,
       file_type,
       file_data,
+      files: cleanFiles,
       domain: document.getElementById('vaultItemDomain').value,
       tags,
       is_starred: document.getElementById('vaultItemStarred').checked,
@@ -711,7 +889,7 @@ class KennyApp {
 
     await this.store.upsertVaultItem(item);
     this.closeVaultModal();
-    this.showToast('💾 資料已儲存至知識庫');
+    this.showToast('💾 資料與檔案清單已儲存至知識庫');
     this.renderAll();
   }
 
@@ -789,28 +967,59 @@ class KennyApp {
 
     const linkedItemsHtml =
       linkedVaultItems.length === 0
-        ? `<div style="font-size: 12.5px; color: var(--text-muted); padding: 12px 0;">目前尚未掛載參考資料。您可以從下方下拉選單將平常收集的「文字、連結、檔案」掛載到此策略分頁中。</div>`
+        ? `<div style="font-size: 12.5px; color: var(--text-muted); padding: 12px 0;">目前尚未掛載參考資料。您可以點擊下方「📎 直接上傳新檔案至此策略頁」或從下拉選單掛載已收集的資料。</div>`
         : linkedVaultItems
-            .map(
-              (item) => `
+            .map((item) => {
+              const itemFiles = this.getNormalizedItemFiles(item);
+              const subFilesHtml =
+                itemFiles.length > 0
+                  ? `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color); display: flex; flex-direction: column; gap: 6px;">
+                      ${itemFiles
+                        .map(
+                          (f, fIdx) => `
+                        <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-app); padding: 6px 10px; border-radius: var(--radius-sm); font-size: 12.5px;">
+                          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input
+                              type="checkbox"
+                              class="strat-file-check"
+                              data-item-id="${item.id}"
+                              data-file-idx="${fIdx}"
+                              style="width: 14px; height: 14px; accent-color: #dc2626; cursor: pointer;"
+                            />
+                            <span>📎 <strong>${this.escapeHtml(f.name)}</strong> (${((f.size || 0) / 1024).toFixed(1)} KB)</span>
+                          </label>
+                          <div style="display: flex; gap: 6px;" class="no-print">
+                            <button class="btn btn-sm" onclick="app.downloadSpecificItemFile('${item.id}', ${fIdx})">⬇️ 下載</button>
+                            <button class="btn btn-sm" style="color: #dc2626; border-color: #fecaca; background: #fef2f2;" onclick="app.deleteSpecificItemFile('${strategy.id}', '${item.id}', ${fIdx})">🗑️ 刪除此檔</button>
+                          </div>
+                        </div>
+                      `
+                        )
+                        .join('')}
+                    </div>`
+                  : '';
+
+              return `
             <div class="vault-card" style="margin-bottom: 8px; padding: 12px 14px; cursor: default;">
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input
+                    type="checkbox"
+                    class="strat-linked-check"
+                    value="${item.id}"
+                    style="width: 15px; height: 15px; accent-color: #dc2626; cursor: pointer;"
+                  />
                   ${this.getTypeBadgeHtml(item.type)}
                   <strong style="font-size: 13.5px;">${this.escapeHtml(item.title)}</strong>
-                </div>
+                </label>
                 <div style="display: flex; gap: 6px;" class="no-print">
                   ${
                     item.type === 'link' && item.url
                       ? `<a href="${this.escapeHtml(item.url)}" target="_blank" class="btn btn-sm">開啟連結 ↗</a>`
                       : ''
                   }
-                  ${
-                    item.type === 'file'
-                      ? `<button class="btn btn-sm" onclick="app.downloadVaultFile('${item.id}')">⬇️ 下載檔案</button>`
-                      : ''
-                  }
-                  <button class="btn btn-ghost btn-sm" onclick="app.detachVaultItemFromStrategy('${strategy.id}', '${item.id}')">移除掛載 ✕</button>
+                  <button class="btn btn-sm" onclick="app.openVaultModal('${item.id}')">✏️ 編輯 / 管理檔案</button>
+                  <button class="btn btn-ghost btn-sm" style="color: #dc2626;" onclick="app.detachVaultItemFromStrategy('${strategy.id}', '${item.id}')">🗑️ 移除</button>
                 </div>
               </div>
               ${
@@ -818,9 +1027,10 @@ class KennyApp {
                   ? `<div style="font-size: 12.5px; color: var(--text-secondary); white-space: pre-line; margin-top: 4px;">${this.escapeHtml(item.content)}</div>`
                   : ''
               }
+              ${subFilesHtml}
             </div>
-          `
-            )
+          `;
+            })
             .join('');
 
     // 尚未掛載的可選素材
@@ -908,8 +1118,27 @@ class KennyApp {
             <div>
               <h3 style="font-size: 14.5px; font-weight: 600;">📎 本策略掛載之參考依據、連結與檔案附件 (${linkedVaultItems.length})</h3>
               <div style="font-size: 12px; color: var(--text-muted);">
-                掛載於此處的文字、網址與檔案，在您分享此分頁給主任或老師時將一併提供對方參閱與下載。
+                可勾選下方任一檔案或參考項目進行刪除／移除，或直接上傳新檔案至此策略分頁。
               </div>
+            </div>
+            <div class="no-print" style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button class="btn btn-sm" onclick="document.getElementById('stratDirectFileInput').click()">
+                📎 直接上傳檔案至此策略頁
+              </button>
+              <input
+                type="file"
+                id="stratDirectFileInput"
+                multiple
+                style="display: none;"
+                onchange="app.uploadFileDirectlyToStrategy('${strategy.id}', event)"
+              />
+              <button
+                class="btn btn-sm"
+                style="color: #dc2626; border-color: #fecaca; background: #fef2f2;"
+                onclick="app.deleteCheckedStrategyFilesAndItems('${strategy.id}')"
+              >
+                🗑️ 刪除勾選的檔案／項目
+              </button>
             </div>
           </div>
 
@@ -1049,6 +1278,171 @@ class KennyApp {
     strat.linked_items = (strat.linked_items || []).filter((id) => id !== itemId);
     await this.store.upsertStrategy(strat);
     this.renderWorkspace();
+  }
+
+  downloadSpecificItemFile(itemId, fileIdx) {
+    const item = this.store.getVaultItems().find((i) => i.id === itemId);
+    if (!item) return;
+    const files = this.getNormalizedItemFiles(item);
+    const f = files[fileIdx];
+    if (!f) {
+      this.downloadVaultFile(itemId);
+      return;
+    }
+    const href = f.url || f.data;
+    if (!href) {
+      alert('此檔案尚無可下載的實體內容');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = f.name || 'download';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  async deleteSpecificItemFile(stratId, itemId, fileIdx) {
+    const items = this.store.getVaultItems();
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const files = this.getNormalizedItemFiles(item);
+    const targetFile = files[fileIdx];
+    if (!targetFile) return;
+
+    if (!confirm(`確定要刪除檔案「${targetFile.name}」嗎？`)) return;
+
+    files.splice(fileIdx, 1);
+    if (files.length === 0 && item.type === 'file') {
+      // 若該檔案項目已無任何檔案，將其從本策略移除並刪除該空檔案紀錄
+      await this.detachVaultItemFromStrategy(stratId, itemId);
+      await this.store.deleteVaultItem(itemId);
+    } else {
+      item.files = files;
+      item.file_name = files.length > 0 ? files[0].name : '';
+      item.file_size = files.reduce((s, f) => s + (f.size || 0), 0);
+      item.file_type = files.length > 0 ? files[0].type : '';
+      item.file_data = files.length > 0 ? files[0].data : '';
+      await this.store.upsertVaultItem(item);
+    }
+
+    this.showToast(`🗑️ 已刪除檔案「${targetFile.name}」`);
+    this.renderAll();
+  }
+
+  async deleteCheckedStrategyFilesAndItems(stratId) {
+    const checkedItemBoxes = Array.from(document.querySelectorAll('.strat-linked-check:checked'));
+    const checkedFileBoxes = Array.from(document.querySelectorAll('.strat-file-check:checked'));
+
+    if (checkedItemBoxes.length === 0 && checkedFileBoxes.length === 0) {
+      alert('請先勾選您要刪除或移除的檔案／項目！');
+      return;
+    }
+
+    if (
+      !confirm(
+        `確定要刪除／移除已勾選的 ${checkedItemBoxes.length + checkedFileBoxes.length} 個項目或檔案嗎？`
+      )
+    ) {
+      return;
+    }
+
+    const strategies = this.store.getStrategies();
+    const strat = strategies.find((s) => s.id === stratId);
+    if (!strat) return;
+
+    // 1. 處理整筆勾選的項目
+    const itemIdsToRemove = new Set(checkedItemBoxes.map((cb) => cb.value));
+    if (itemIdsToRemove.size > 0) {
+      strat.linked_items = (strat.linked_items || []).filter((id) => !itemIdsToRemove.has(id));
+      await this.store.upsertStrategy(strat);
+    }
+
+    // 2. 處理單獨勾選的子檔案（依 itemId 分組，由後往前刪除 index）
+    const fileDeletesByItem = {};
+    checkedFileBoxes.forEach((cb) => {
+      const iId = cb.getAttribute('data-item-id');
+      const fIdx = parseInt(cb.getAttribute('data-file-idx'), 10);
+      if (!itemIdsToRemove.has(iId)) {
+        fileDeletesByItem[iId] = fileDeletesByItem[iId] || [];
+        fileDeletesByItem[iId].push(fIdx);
+      }
+    });
+
+    const allItems = this.store.getVaultItems();
+    for (const [iId, indices] of Object.entries(fileDeletesByItem)) {
+      const item = allItems.find((i) => i.id === iId);
+      if (!item) continue;
+      const files = this.getNormalizedItemFiles(item);
+      indices
+        .sort((a, b) => b - a)
+        .forEach((idx) => {
+          if (files[idx]) files.splice(idx, 1);
+        });
+
+      if (files.length === 0 && item.type === 'file') {
+        strat.linked_items = (strat.linked_items || []).filter((id) => id !== iId);
+        await this.store.upsertStrategy(strat);
+        await this.store.deleteVaultItem(iId);
+      } else {
+        item.files = files;
+        item.file_name = files.length > 0 ? files[0].name : '';
+        item.file_size = files.reduce((s, f) => s + (f.size || 0), 0);
+        item.file_type = files.length > 0 ? files[0].type : '';
+        item.file_data = files.length > 0 ? files[0].data : '';
+        await this.store.upsertVaultItem(item);
+      }
+    }
+
+    this.showToast('🗑️ 已刪除所選取的檔案與項目');
+    this.renderAll();
+  }
+
+  async uploadFileDirectlyToStrategy(stratId, event) {
+    const fileList = event.target.files ? Array.from(event.target.files) : [];
+    if (fileList.length === 0) return;
+
+    const strategies = this.store.getStrategies();
+    const strat = strategies.find((s) => s.id === stratId);
+    if (!strat) return;
+
+    for (const file of fileList) {
+      const uploaded = await this.store.uploadFile(file);
+      const fileEntry = {
+        id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        url: uploaded.url || '',
+        data: uploaded.file_data || ''
+      };
+      const newItem = {
+        id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
+        type: 'file',
+        title: file.name,
+        content: `附加於策略「${strat.title}」之檔案（${(file.size / 1024).toFixed(1)} KB）`,
+        url: uploaded.url || '',
+        file_name: file.name,
+        file_size: file.size,
+        file_type: file.type || 'application/octet-stream',
+        file_data: uploaded.file_data || '',
+        files: [fileEntry],
+        domain: strat.domain || 'vision',
+        tags: ['策略附件'],
+        is_starred: false,
+        is_inbox: false
+      };
+      await this.store.upsertVaultItem(newItem);
+      strat.linked_items = strat.linked_items || [];
+      strat.linked_items.push(newItem.id);
+    }
+
+    await this.store.upsertStrategy(strat);
+    event.target.value = '';
+    this.showToast(`📎 已上傳並掛載 ${fileList.length} 個檔案至此策略頁！`);
+    this.renderAll();
   }
 
   async deleteStrategyConfirm(stratId) {
@@ -1595,17 +1989,22 @@ CREATE POLICY "Public Access kenny-vault-files" ON storage.objects FOR ALL USING
       });
     }
 
-    if (fileName || existing.type === 'file' || this.modalCurrentType === 'file') {
-      const fileDecoded = this.extractDecodedFileText(existing);
+    const activeFiles =
+      Array.isArray(this.modalFiles) && this.modalFiles.length > 0
+        ? this.modalFiles
+        : this.getNormalizedItemFiles(existing);
+
+    activeFiles.forEach((f, idx) => {
+      const fileDecoded = this.extractDecodedFileText({ file_data: f.data });
       entries.push({
-        id: 'vm_file',
+        id: `vm_file_${idx}`,
         badge: '📎 檔案附件',
-        label: `上傳檔案附件：${fileName || title}`,
-        text: `【附加檔案資訊】：${fileName || title}${fileDecoded ? `\n【檔案文字內容摘錄】：\n${fileDecoded}` : ''}`,
+        label: `上傳檔案附件：${f.name} (${((f.size || 0) / 1024).toFixed(1)} KB)`,
+        text: `【附加檔案資訊】：${f.name}${f.url ? ` (${f.url})` : ''}${fileDecoded ? `\n【檔案文字內容摘錄】：\n${fileDecoded}` : ''}`,
         checked: true,
         vaultFileId: existing.id || null
       });
-    }
+    });
 
     this.openGeminiModal(`單筆資料：${title}`, entries);
   }

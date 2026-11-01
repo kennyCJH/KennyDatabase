@@ -203,9 +203,17 @@
         </div>
 
         <div id="vaultFileGroup" class="form-group" style="display: none;">
-          <label class="form-label">選擇要存入的檔案（支援 PDF、Word、簡報、Markdown、圖片等）</label>
-          <input type="file" id="vaultItemFileInput" class="form-input" onchange="app.handleModalFileSelect(event)" />
-          <div id="vaultFileCurrentInfo" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;"></div>
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
+            <label class="form-label">📎 檔案附件上傳（支援多選上傳 PDF、Word、簡報、Markdown、圖片等）</label>
+            <div id="vaultFileBatchActions" style="display: none; gap: 6px;">
+              <button type="button" class="btn btn-sm" onclick="app.toggleSelectAllModalFiles()">☑ 全選 / 取消</button>
+              <button type="button" class="btn btn-sm" style="color: #dc2626; border-color: #fecaca; background: #fef2f2;" onclick="app.deleteSelectedModalFiles()">
+                🗑️ 刪除勾選的檔案
+              </button>
+            </div>
+          </div>
+          <input type="file" id="vaultItemFileInput" class="form-input" multiple onchange="app.handleModalFileSelect(event)" />
+          <div id="vaultFileListContainer" style="display: flex; flex-direction: column; gap: 6px; margin-top: 6px;"></div>
         </div>
 
         <div class="form-group">
