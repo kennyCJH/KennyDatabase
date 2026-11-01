@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KennyDatabase | 國小校長個人知識庫與治校策略系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Supabase JS SDK (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- 獨立「單頁分享檢視模式」(當網址帶有 ?share=... 時自動切換顯示) -->
+  <div id="shareStandaloneRoot" style="display: none;"></div>
+
+  <!-- 校長私人工作台主畫面 -->
+  <div id="appRoot" class="app-layout">
+    <!-- 左側極簡導覽欄 (Sidebar) -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-box">
+          <div class="brand-avatar">K</div>
+          <div>
+            <div id="brandPrincipalName" class="brand-title">Kenny 校長知識庫</div>
+            <div id="brandSchoolName" class="brand-subtitle">治校政策與策略決策中心</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="app.openCloudSettingsModal()" title="系統與雲端設定">
+          ⚙️
+        </button>
+      </div>
+
+      <div class="sidebar-scroll">
+        <!-- 第一層：收集與總覽 -->
+        <div class="nav-section">
+          <div class="nav-section-header">
+            <span>第一層：隨手收集庫 (Vault)</span>
+            <button class="nav-section-action" onclick="app.openVaultModal()" title="新增資料">+ 新增</button>
+          </div>
+          <div id="navInbox" class="nav-item" onclick="app.setNavigation('inbox')">
+            <div class="nav-item-left">
+              <span>⚡</span>
+              <span class="nav-item-label">快速收件匣 (Inbox)</span>
+            </div>
+            <span id="badgeInbox" class="nav-badge">0</span>
+          </div>
+          <div id="navAllVault" class="nav-item active" onclick="app.setNavigation('all')">
+            <div class="nav-item-left">
+              <span>🗂️</span>
+              <span class="nav-item-label">全部資料庫總覽</span>
+            </div>
+            <span id="badgeAllVault" class="nav-badge">0</span>
+          </div>
+          <div id="navStarred" class="nav-item" onclick="app.setNavigation('starred')">
+            <div class="nav-item-left">
+              <span>⭐</span>
+              <span class="nav-item-label">星號重點標記</span>
+            </div>
+            <span id="badgeStarred" class="nav-badge">0</span>
+          </div>
+        </div>
+
+        <!-- 第二層：校務六大核心領域 -->
+        <div class="nav-section">
+          <div class="nav-section-header">
+            <span>第二層：校務領域分類</span>
+            <button class="nav-section-action" onclick="app.openDomainManagerModal()" title="管理校務分類">管理</button>
+          </div>
+          <div id="domainNavList"></div>
+        </div>
+
+        <!-- 第三層：治校政策與策略分頁 -->
+        <div class="nav-section">
+          <div class="nav-section-header">
+            <span>第三層：治校政策與策略分頁</span>
+            <button class="nav-section-action" onclick="app.createNewStrategyPage()" title="建立新策略分頁">+ 新策略</button>
+          </div>
+          <div id="strategyNavList"></div>
+        </div>
+      </div>
+
+      <!-- 底部雲端狀態與備份控制 -->
+      <div class="sidebar-footer">
+        <div class="cloud-status-bar" onclick="app.openCloudSettingsModal()">
+          <div>
+            <span id="cloudStatusDot" class="status-indicator local"></span>
+            <span id="cloudStatusText">本地儲存模式 (點擊設雲端)</span>
+          </div>
+          <span style="color: var(--text-muted); font-size: 11px;">設定 ➔</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm" style="flex: 1;" onclick="app.exportBackup()">⬇️ 匯出備份</button>
+          <button class="btn btn-sm" style="flex: 1;" onclick="document.getElementById('importBackupInput').click()">⬆️ 匯入還原</button>
+          <input type="file" id="importBackupInput" accept=".json" style="display: none;" onchange="app.importBackup(event)" />
+        </div>
+      </div>
+    </aside>
+
+    <!-- 中央主工作區 (Main Workspace) -->
+    <main class="main-workspace">
+      <!-- 頂部控制列 -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+          <h1 id="workspaceTitle" class="breadcrumb-title">全部資料庫總覽</h1>
+          <span id="workspaceSubtitle" style="font-size: 12px; color: var(--text-muted);"></span>
+        </div>
+
+        <div class="topbar-right">
+          <div class="search-box">
+            <span>🔍</span>
+            <input
+              id="globalSearchInput"
+              type="text"
+              placeholder="搜尋文字、網址、檔名或 #標籤..."
+              oninput="app.handleSearch(this.value)"
+            />
+            <span class="kbd-pill">Ctrl+K</span>
+          </div>
+          <button class="btn" onclick="app.openVaultModal()">+ 新增資料</button>
+          <button class="btn btn-primary" onclick="app.createNewStrategyPage()">🧭 建立策略分頁</button>
+        </div>
+      </header>
+
+      <!-- 主內容滾動區 -->
+      <div id="workspaceBody" class="workspace-body"></div>
+    </main>
+  </div>
+
+  <!-- ========================================================================
+       Modal 1: 新增 / 編輯 資料素材 (複製文字 / 網頁連結 / 上傳檔案)
+       ======================================================================== -->
+  <div id="vaultModal" class="modal-backdrop">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div id="vaultModalTitle" class="modal-title">新增資料至校長知識庫</div>
+        <button class="btn btn-ghost btn-sm" onclick="app.closeVaultModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="vaultItemId" />
+        <div class="form-group">
+          <label class="form-label">資料類型</label>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="typeBtn_snippet" class="btn" style="flex: 1;" onclick="app.selectVaultModalType('snippet')">📝 複製文字 / 筆記</button>
+            <button type="button" id="typeBtn_link" class="btn" style="flex: 1;" onclick="app.selectVaultModalType('link')">🔗 網頁連結 / 書籤</button>
+            <button type="button" id="typeBtn_file" class="btn" style="flex: 1;" onclick="app.selectVaultModalType('file')">📎 檔案附件上傳</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">標題 *</label>
+          <input type="text" id="vaultItemTitle" class="form-input" placeholder="例如：教育部 AI 數位學習精進方案要點、友校空間改造案例..." />
+        </div>
+
+        <div id="vaultUrlGroup" class="form-group" style="display: none;">
+          <label class="form-label">網頁連結 URL (或 Google 雲端硬碟檔案分享網址)</label>
+          <input type="url" id="vaultItemUrl" class="form-input" placeholder="https://..." />
+        </div>
+
+        <div id="vaultFileGroup" class="form-group" style="display: none;">
+          <label class="form-label">選擇要存入的檔案（支援 PDF、Word、簡報、Markdown、圖片等）</label>
+          <input type="file" id="vaultItemFileInput" class="form-input" onchange="app.handleModalFileSelect(event)" />
+          <div id="vaultFileCurrentInfo" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">內容摘錄 / 複製的文字 / 校長眉批筆記</label>
+          <textarea id="vaultItemContent" class="form-textarea" placeholder="直接貼上複製的文章段落、演講金句，或寫下這份資料未來如何應用於校務推動..."></textarea>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label class="form-label">歸屬校務核心領域</label>
+            <select id="vaultItemDomain" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">標籤（以逗號分隔）</label>
+            <input type="text" id="vaultItemTags" class="form-input" placeholder="AI教育, 閱讀推動, 115學年度" />
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 18px; padding-top: 4px;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+            <input type="checkbox" id="vaultItemStarred" /> ⭐ 標記為重要星號
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;">
+            <input type="checkbox" id="vaultItemInbox" /> ⚡ 保留在快速收件匣（待日後整理）
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeVaultModal()">取消</button>
+        <button id="vaultSaveBtn" class="btn btn-primary" onclick="app.saveVaultModal()">💾 儲存資料</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       Modal 2: 策略分頁「分享與權限控管中心」
+       ======================================================================== -->
+  <div id="shareModal" class="modal-backdrop">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div class="modal-title">🔗 策略分頁分享與權限設定</div>
+        <button class="btn btn-ghost btn-sm" onclick="app.closeShareModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 13px; color: var(--text-secondary);">
+          設定此策略分頁的瀏覽權限。當您分享連結給處室主任、組長或全校教師時，**對方只會看到這一個策略分頁與其掛載的附件，絕對看不到您的其他私人知識庫**。
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">選擇權限模式</label>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label class="vault-card" style="padding: 10px 14px; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px;">
+              <input type="radio" name="shareModeRadio" value="private" onchange="app.updateShareModalMode('private')" />
+              <div>
+                <div style="font-weight: 600;">🔒 私人隱藏 (Private)</div>
+                <div style="font-size: 12px; color: var(--text-muted);">僅校長本人於工作台可見，外部連結無法開啟。</div>
+              </div>
+            </label>
+
+            <label class="vault-card" style="padding: 10px 14px; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px;">
+              <input type="radio" name="shareModeRadio" value="passcode" onchange="app.updateShareModalMode('passcode')" />
+              <div>
+                <div style="font-weight: 600;">🔑 指定對象分享 — 專屬連結 + 通行碼 (Passcode)</div>
+                <div style="font-size: 12px; color: var(--text-muted);">適合傳給處室主任或特定小組討論，對方須輸入您設定的通行碼才能閱覽。</div>
+              </div>
+            </label>
+
+            <label class="vault-card" style="padding: 10px 14px; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px;">
+              <input type="radio" name="shareModeRadio" value="public" onchange="app.updateShareModalMode('public')" />
+              <div>
+                <div style="font-weight: 600;">🌐 完全公開連結 (Public)</div>
+                <div style="font-size: 12px; color: var(--text-muted);">擁有連結的人無須密碼即可閱覽與下載附件，適合校務會議、全校公告或外賓參訪。</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div id="sharePasscodeBox" class="form-group" style="display: none;">
+          <label class="form-label">設定本頁專屬通行碼 (Passcode)</label>
+          <input type="text" id="sharePasscodeInput" class="form-input" placeholder="例如：2026read 或主任共識密碼" oninput="app.refreshShareUrlPreview()" />
+        </div>
+
+        <div id="shareUrlBox" class="form-group" style="display: none;">
+          <label class="form-label">專屬分享連結（點擊複製即可傳送至 LINE / Email）</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="shareGeneratedUrl" class="form-input" readonly style="background: var(--bg-app); font-family: var(--font-mono); font-size: 12px;" />
+            <button class="btn btn-primary" onclick="app.copyShareUrl()">📋 複製連結</button>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <button class="btn btn-sm" onclick="app.previewSharedPage()">👁️ 預覽對方看到的獨立畫面</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="app.saveShareModal()">完成設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       Modal 3: 雲端資料庫 (Supabase) 與 GitHub 部署設定中心
+       ======================================================================== -->
+  <div id="cloudModal" class="modal-backdrop">
+    <div class="modal-panel" style="max-width: 700px;">
+      <div class="modal-header">
+        <div class="modal-title">⚙️ 校長工作台設定 & Supabase 雲端連線中心</div>
+        <button class="btn btn-ghost btn-sm" onclick="app.closeCloudSettingsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label class="form-label">校長稱謂 / 網站標題</label>
+            <input type="text" id="cfgPrincipalName" class="form-input" placeholder="Kenny 校長知識庫" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">學校名稱 / 副標題</label>
+            <input type="text" id="cfgSchoolName" class="form-input" placeholder="國民小學治校政策與策略中心" />
+          </div>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-color);" />
+
+        <div>
+          <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">☁️ Supabase 免費雲端資料庫連線（跨手機/電腦即時同步 & 大型檔案上傳）</div>
+          <div style="font-size: 12.5px; color: var(--text-secondary); margin-bottom: 10px;">
+            未填寫前系統會自動將資料安全儲存在本機瀏覽器。填入您的免費 <a href="https://supabase.com" target="_blank" style="color: var(--accent-blue);">Supabase</a> 專案網址與金鑰後，即可在手機、平板、辦公室電腦雙向同步！
+          </div>
+
+          <div class="form-group" style="margin-bottom: 10px;">
+            <label class="form-label">Supabase Project URL</label>
+            <input type="url" id="cfgSupabaseUrl" class="form-input" placeholder="https://xxxxxxxxxxxx.supabase.co" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Supabase Anon Public Key</label>
+            <input type="password" id="cfgSupabaseKey" class="form-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." />
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;">
+            <button class="btn btn-blue btn-sm" onclick="app.saveCloudConfigAndSync('push')">⬆️ 儲存設定並將目前資料上傳至雲端</button>
+            <button class="btn btn-sm" onclick="app.saveCloudConfigAndSync('pull')">⬇️ 從雲端下載最新資料覆蓋本機</button>
+            <button class="btn btn-sm" onclick="app.copySupabaseSql()">📜 複製 Supabase 資料表初始化 SQL</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeCloudSettingsModal()">關閉</button>
+        <button class="btn btn-primary" onclick="app.saveBasicConfig()">💾 儲存設定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       Modal 4: 校務領域分類管理 (Domain Manager)
+       ======================================================================== -->
+  <div id="domainModal" class="modal-backdrop">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div class="modal-title">🏛️ 管理校務核心領域分類</div>
+        <button class="btn btn-ghost btn-sm" onclick="app.closeDomainManagerModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 12.5px; color: var(--text-secondary);">
+          您可以自由修改國小校務領域名稱、對應處室，或新增專屬專案分類（例如：「百週年校慶專案」、「雙語實驗班」）。
+        </div>
+        <div id="domainManagerList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        <button class="btn btn-sm" style="align-self: flex-start;" onclick="app.addDomainRow()">+ 新增一個校務領域分類</button>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="app.closeDomainManagerModal()">取消</button>
+        <button class="btn btn-primary" onclick="app.saveDomainManager()">💾 儲存分類變更</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 訊息容器 -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- 載入核心腳本 -->
+  <script src="data.js"></script>
+  <script src="supabase-client.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
