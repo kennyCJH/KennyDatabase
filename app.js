@@ -16,12 +16,61 @@ class KennyApp {
   }
 
   async init() {
-    // 檢查是否為「單頁分享獨立檢視模式 (?share=...)」
+    // 檢查是否為「單頁分享獨立檢視模式 (?share=...)」——維持單頁分享原先的權限設定
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('share')) {
       await this.renderStandaloneShareMode();
       return;
     }
+
+    // 主工作台進入前，檢查是否已通過校長主密碼驗證 (預設密碼: cany1234)
+    if (!this.store.isPrincipalUnlocked()) {
+      this.showPrincipalAuthGate();
+      return;
+    }
+
+    await this.enterPrincipalWorkspace();
+  }
+
+  showPrincipalAuthGate() {
+    document.getElementById('appRoot').style.display = 'none';
+    document.getElementById('shareStandaloneRoot').style.display = 'none';
+    const gate = document.getElementById('principalAuthGate');
+    gate.style.display = 'block';
+    const input = document.getElementById('principalMasterPwdInput');
+    if (input) {
+      input.value = '';
+      setTimeout(() => input.focus(), 50);
+    }
+  }
+
+  async handlePrincipalLogin() {
+    const input = document.getElementById('principalMasterPwdInput');
+    const remember = document.getElementById('rememberPrincipalDevice');
+    const errEl = document.getElementById('principalAuthError');
+    const pwd = input ? input.value : '';
+    const rememberDays = remember && remember.checked ? 7 : 0;
+
+    if (this.store.verifyPrincipalPassword(pwd, rememberDays)) {
+      if (errEl) errEl.style.display = 'none';
+      document.getElementById('principalAuthGate').style.display = 'none';
+      await this.enterPrincipalWorkspace();
+      this.showToast('🔓 校長身分驗證通過，歡迎進入知識庫工作台');
+    } else {
+      if (errEl) errEl.style.display = 'block';
+      if (input) input.select();
+    }
+  }
+
+  handlePrincipalLock() {
+    this.store.lockPrincipalSession();
+    this.showPrincipalAuthGate();
+    this.showToast('🔒 工作台已鎖定');
+  }
+
+  async enterPrincipalWorkspace() {
+    document.getElementById('principalAuthGate').style.display = 'none';
+    document.getElementById('appRoot').style.display = 'flex';
 
     // 初始化雲端自動同步（若已設定 Supabase）
     this.refreshHeaderAndCloudBadge();
@@ -1287,6 +1336,7 @@ class KennyApp {
     const cfg = this.store.config;
     document.getElementById('cfgPrincipalName').value = cfg.principalName || '';
     document.getElementById('cfgSchoolName').value = cfg.schoolName || '';
+    document.getElementById('cfgPrincipalPin').value = cfg.principalPin || 'cany1234';
     document.getElementById('cfgSupabaseUrl').value = cfg.supabaseUrl || '';
     document.getElementById('cfgSupabaseKey').value = cfg.supabaseAnonKey || '';
     document.getElementById('cloudModal').classList.add('open');
@@ -1300,6 +1350,7 @@ class KennyApp {
     this.store.saveConfig({
       principalName: document.getElementById('cfgPrincipalName').value.trim() || 'Kenny 校長知識庫',
       schoolName: document.getElementById('cfgSchoolName').value.trim() || '治校政策與策略決策中心',
+      principalPin: document.getElementById('cfgPrincipalPin').value.trim() || 'cany1234',
       supabaseUrl: document.getElementById('cfgSupabaseUrl').value.trim(),
       supabaseAnonKey: document.getElementById('cfgSupabaseKey').value.trim()
     });
@@ -1312,6 +1363,7 @@ class KennyApp {
     this.store.saveConfig({
       principalName: document.getElementById('cfgPrincipalName').value.trim() || 'Kenny 校長知識庫',
       schoolName: document.getElementById('cfgSchoolName').value.trim() || '治校政策與策略決策中心',
+      principalPin: document.getElementById('cfgPrincipalPin').value.trim() || 'cany1234',
       supabaseUrl: document.getElementById('cfgSupabaseUrl').value.trim(),
       supabaseAnonKey: document.getElementById('cfgSupabaseKey').value.trim()
     });

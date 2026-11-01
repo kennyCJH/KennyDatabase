@@ -22,22 +22,78 @@ class KennyDataStore {
   }
 
   loadConfig() {
-    try {
-      const raw = localStorage.getItem(this.STORAGE_KEYS.CONFIG);
-      if (raw) {
-        return JSON.parse(raw);
-      }
-    } catch (e) {
-      console.warn('讀取設定失敗，使用預設設定', e);
-    }
-    return {
+    const defaultCfg = {
       principalName: 'Kenny 校長',
       schoolName: '國民小學治校知識庫與策略中心',
-      principalPin: '', // 若設定則進入後台需驗證校長 PIN 碼
+      principalPin: 'cany1234', // 預設校長主工作台驗證密碼
       supabaseUrl: '',
       supabaseAnonKey: '',
       githubRepoUrl: ''
     };
+    try {
+      const raw = localStorage.getItem(this.STORAGE_KEYS.CONFIG);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (!parsed.principalPin) {
+          parsed.principalPin = 'cany1234';
+        }
+        return { ...defaultCfg, ...parsed };
+      }
+    } catch (e) {
+      console.warn('讀取設定失敗，使用預設設定', e);
+    }
+    return defaultCfg;
+  }
+
+  // --------------------------------------------------------------------------
+  // 校長工作台密碼驗證機制 (預設密碼：cany1234)
+  // --------------------------------------------------------------------------
+  isPrincipalUnlocked() {
+    try {
+      if (sessionStorage.getItem(this.STORAGE_KEYS.AUTH_UNLOCKED) === 'true') {
+        return true;
+      }
+      const remembered = localStorage.getItem(this.STORAGE_KEYS.AUTH_UNLOCKED);
+      if (remembered) {
+        const data = JSON.parse(remembered);
+        if (data.expiresAt && Date.now() < data.expiresAt) {
+          return true;
+        }
+        localStorage.removeItem(this.STORAGE_KEYS.AUTH_UNLOCKED);
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    return false;
+  }
+
+  verifyPrincipalPassword(inputPwd, rememberDays = 0) {
+    const expected = this.config.principalPin || 'cany1234';
+    if (String(inputPwd).trim() === String(expected).trim()) {
+      sessionStorage.setItem(this.STORAGE_KEYS.AUTH_UNLOCKED, 'true');
+      if (rememberDays > 0) {
+        localStorage.setItem(
+          this.STORAGE_KEYS.AUTH_UNLOCKED,
+          JSON.stringify({
+            unlocked: true,
+            expiresAt: Date.now() + rememberDays * 24 * 60 * 60 * 1000
+          })
+        );
+      }
+      return true;
+    }
+    return false;
+  }
+
+  lockPrincipalSession() {
+    sessionStorage.removeItem(this.STORAGE_KEYS.AUTH_UNLOCKED);
+    localStorage.removeItem(this.STORAGE_KEYS.AUTH_UNLOCKED);
+  }
+
+  ensureAuthorized() {
+    if (!this.isPrincipalUnlocked()) {
+      throw new Error('未通過校長密碼驗證，無法執行新增、修改或刪除操作。');
+    }
   }
 
   saveConfig(newConfig) {
@@ -90,6 +146,7 @@ class KennyDataStore {
   }
 
   async saveDomains(domains) {
+    this.ensureAuthorized();
     localStorage.setItem(this.STORAGE_KEYS.DOMAINS, JSON.stringify(domains));
     if (this.isCloudConnected && this.supabase) {
       try {
@@ -127,6 +184,7 @@ class KennyDataStore {
   }
 
   async upsertVaultItem(item) {
+    this.ensureAuthorized();
     const items = this.getVaultItems();
     const now = new Date().toISOString();
     const updatedItem = {
@@ -154,6 +212,7 @@ class KennyDataStore {
   }
 
   async deleteVaultItem(id) {
+    this.ensureAuthorized();
     const items = this.getVaultItems().filter((i) => i.id !== id);
     this.saveVaultItemsLocal(items);
 
@@ -253,6 +312,7 @@ class KennyDataStore {
   }
 
   async upsertStrategy(strategy) {
+    this.ensureAuthorized();
     const strategies = this.getStrategies();
     const now = new Date().toISOString();
     const updated = {
@@ -280,6 +340,7 @@ class KennyDataStore {
   }
 
   async deleteStrategy(id) {
+    this.ensureAuthorized();
     const strategies = this.getStrategies().filter((s) => s.id !== id);
     this.saveStrategiesLocal(strategies);
     if (this.isCloudConnected && this.supabase) {

@@ -16,8 +16,49 @@
   <!-- 獨立「單頁分享檢視模式」(當網址帶有 ?share=... 時自動切換顯示) -->
   <div id="shareStandaloneRoot" style="display: none;"></div>
 
-  <!-- 校長私人工作台主畫面 -->
-  <div id="appRoot" class="app-layout">
+  <!-- 校長個人工作台主密碼驗證閘門 (預設保護整個網站，通過驗證後才載入工作台) -->
+  <div id="principalAuthGate" class="share-standalone-wrapper" style="display: none;">
+    <div class="passcode-gate-card" style="max-width: 440px; margin-top: 90px;">
+      <div style="width: 48px; height: 48px; border-radius: 10px; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 20px; margin-bottom: 14px;">
+        K
+      </div>
+      <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; margin-bottom: 4px;">
+        PRIVATE PRINCIPAL WORKSPACE
+      </div>
+      <h1 style="font-size: 19px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">
+        Kenny 校長個人知識庫與策略中心
+      </h1>
+      <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px;">
+        本系統為私人知識庫。請輸入校長專屬驗證密碼以進入工作台、新增或管理資料：
+      </p>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+        <input
+          type="password"
+          id="principalMasterPwdInput"
+          class="form-input"
+          placeholder="請輸入校長驗證密碼..."
+          style="text-align: center; font-size: 15px; letter-spacing: 2px;"
+          onkeydown="if(event.key==='Enter') app.handlePrincipalLogin()"
+        />
+        <button class="btn btn-primary" onclick="app.handlePrincipalLogin()">
+          驗證進入
+        </button>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: var(--text-muted);">
+        <input type="checkbox" id="rememberPrincipalDevice" />
+        <label for="rememberPrincipalDevice" style="cursor: pointer;">在此私人裝置記住登入狀態 7 天</label>
+      </div>
+
+      <div id="principalAuthError" style="color: #dc2626; font-size: 12.5px; font-weight: 500; margin-top: 12px; display: none;">
+        ❌ 密碼錯誤，請重新輸入校長專屬密碼。
+      </div>
+    </div>
+  </div>
+
+  <!-- 校長私人工作台主畫面 (通過密碼驗證後顯示) -->
+  <div id="appRoot" class="app-layout" style="display: none;">
     <!-- 左側極簡導覽欄 (Sidebar) -->
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
@@ -122,6 +163,7 @@
           </div>
           <button class="btn" onclick="app.openVaultModal()">+ 新增資料</button>
           <button class="btn btn-primary" onclick="app.createNewStrategyPage()">🧭 建立策略分頁</button>
+          <button class="btn btn-ghost btn-sm" onclick="app.handlePrincipalLock()" title="鎖定工作台並登出">🔒 鎖定</button>
         </div>
       </header>
 
@@ -273,7 +315,7 @@
         <button class="btn btn-ghost btn-sm" onclick="app.closeCloudSettingsModal()">✕</button>
       </div>
       <div class="modal-body">
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
           <div class="form-group">
             <label class="form-label">校長稱謂 / 網站標題</label>
             <input type="text" id="cfgPrincipalName" class="form-input" placeholder="Kenny 校長知識庫" />
@@ -281,6 +323,10 @@
           <div class="form-group">
             <label class="form-label">學校名稱 / 副標題</label>
             <input type="text" id="cfgSchoolName" class="form-input" placeholder="國民小學治校政策與策略中心" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">🔑 校長進入驗證密碼</label>
+            <input type="text" id="cfgPrincipalPin" class="form-input" placeholder="預設：cany1234" />
           </div>
         </div>
 
