@@ -259,6 +259,9 @@ class KennyApp {
       });
     }
 
+    this.currentFilteredVaultItems = filtered;
+    this.currentVaultPageTitle = title;
+
     document.getElementById('workspaceTitle').textContent = title;
     document.getElementById('workspaceSubtitle').textContent = subtitle;
 
@@ -316,7 +319,10 @@ class KennyApp {
           </button>
         </div>
 
-        <div style="display: flex; align-items: center; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <button class="btn btn-gemini-red btn-sm" onclick="app.openGeminiFromCurrentVaultView()">
+            ✨ 連結 Gemini 討論本頁資料
+          </button>
           <button class="btn btn-sm ${this.viewMode === 'table' ? 'btn-primary' : ''}" onclick="app.setViewMode('table')">
             ☰ 緊湊列表 (Linear)
           </button>
@@ -850,7 +856,10 @@ class KennyApp {
               />
             </div>
 
-            <div class="no-print" style="display: flex; gap: 6px;">
+            <div class="no-print" style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button class="btn btn-gemini-red btn-sm" onclick="app.openGeminiFromStrategyPage('${strategy.id}')">
+                ✨ 連結 Gemini 討論本策略
+              </button>
               <button class="btn btn-blue btn-sm" onclick="app.openShareModal('${strategy.id}')">
                 🔗 分享與權限設定
               </button>
@@ -1538,8 +1547,307 @@ CREATE POLICY "Public Access kenny-vault-files" ON storage.objects FOR ALL USING
   }
 
   // --------------------------------------------------------------------------
-  // 工具函式
+  // Modal 5: 連結 Gemini 新對話 — 勾選本頁資料與討論中心
   // --------------------------------------------------------------------------
+
+  // 1) 從「新增 / 編輯單筆資料視窗 (Modal 1)」啟動 Gemini 勾選
+  openGeminiFromVaultModal() {
+    const id = document.getElementById('vaultItemId').value;
+    const existing = id ? this.store.getVaultItems().find((i) => i.id === id) || {} : {};
+    const title = document.getElementById('vaultItemTitle').value.trim() || existing.title || '未命名資料';
+    const content = document.getElementById('vaultItemContent').value.trim();
+    const url = document.getElementById('vaultItemUrl').value.trim();
+    const domainId = document.getElementById('vaultItemDomain').value;
+    const domainObj = this.store.getDomains().find((d) => d.id === domainId);
+    const domainName = domainObj ? domainObj.name : '校務資料';
+    const tags = document.getElementById('vaultItemTags').value.trim();
+    const fileName = this.pendingFileUpload
+      ? this.pendingFileUpload.name
+      : existing.file_name || '';
+
+    const entries = [
+      {
+        id: 'vm_title',
+        badge: '📌 標題與分類',
+        label: `標題：${title}（領域：${domainName}${tags ? `｜標籤：${tags}` : ''}）`,
+        text: `【資料標題】：${title}\n【所屬校務領域】：${domainName}${tags ? `\n【相關標籤】：${tags}` : ''}`,
+        checked: true
+      }
+    ];
+
+    if (content) {
+      entries.push({
+        id: 'vm_content',
+        badge: '📝 內容摘錄',
+        label: `內容摘錄／複製文字：${content.slice(0, 65)}${content.length > 65 ? '...' : ''}`,
+        text: `【內容摘錄／校長筆記】：\n${content}`,
+        checked: true
+      });
+    }
+
+    if (url) {
+      entries.push({
+        id: 'vm_url',
+        badge: '🔗 網頁連結',
+        label: `網頁連結／書籤：${url}`,
+        text: `【參考網頁連結】：${url}`,
+        checked: true
+      });
+    }
+
+    if (fileName || existing.type === 'file' || this.modalCurrentType === 'file') {
+      const fileDecoded = this.extractDecodedFileText(existing);
+      entries.push({
+        id: 'vm_file',
+        badge: '📎 檔案附件',
+        label: `上傳檔案附件：${fileName || title}`,
+        text: `【附加檔案資訊】：${fileName || title}${fileDecoded ? `\n【檔案文字內容摘錄】：\n${fileDecoded}` : ''}`,
+        checked: true,
+        vaultFileId: existing.id || null
+      });
+    }
+
+    this.openGeminiModal(`單筆資料：${title}`, entries);
+  }
+
+  // 2) 從「目前資料庫分類列表頁 (收件匣 / 全部資料庫 / 校務六大領域)」啟動 Gemini 勾選
+  openGeminiFromCurrentVaultView() {
+    const items = this.currentFilteredVaultItems || this.store.getVaultItems();
+    const pageTitle = this.currentVaultPageTitle || '知識庫分頁資料';
+
+    if (items.length === 0) {
+      alert('目前此分頁沒有可勾選的資料，請先新增資料或切換至其他分類。');
+      return;
+    }
+
+    const entries = items.map((item) => this.buildGeminiEntryFromVaultItem(item, true));
+    this.openGeminiModal(pageTitle, entries);
+  }
+
+  // 3) 從「治校政策與策略分頁編輯器」啟動 Gemini 勾選
+  openGeminiFromStrategyPage(stratId) {
+    const strat = this.store.getStrategies().find((s) => s.id === stratId);
+    if (!strat) return;
+    const allVault = this.store.getVaultItems();
+
+    const entries = [
+      {
+        id: `strat_head_${strat.id}`,
+        badge: '📌 分頁標題與願景',
+        label: `策略標題：${strat.title}（主責：${strat.office || '跨處室'}｜階段：${strat.status}）`,
+        text: `【治校策略分頁標題】：${strat.title}\n【主責／協作處室】：${strat.office || '跨處室'}\n【目前推動階段】：${strat.status}\n【核心願景與目標摘要】：\n${strat.summary || ''}`,
+        checked: true
+      }
+    ];
+
+    // 加入每一個策略行動段落
+    (strat.blocks || []).forEach((b, idx) => {
+      entries.push({
+        id: `strat_block_${idx}`,
+        badge: '📋 策略段落',
+        label: `${b.title}：${(b.content || '').slice(0, 50)}...`,
+        text: `### ${b.title}\n${b.content || ''}`,
+        checked: true
+      });
+    });
+
+    // 加入該策略分頁已掛載的複製文字、網頁連結、檔案附件
+    const linkedIds = strat.linked_items || [];
+    linkedIds.forEach((id) => {
+      const item = allVault.find((v) => v.id === id);
+      if (item) {
+        entries.push(this.buildGeminiEntryFromVaultItem(item, true));
+      }
+    });
+
+    this.openGeminiModal(`治校策略分頁：${strat.title}`, entries);
+  }
+
+  buildGeminiEntryFromVaultItem(item, defaultChecked = true) {
+    const badge =
+      item.type === 'link'
+        ? '🔗 網頁連結'
+        : item.type === 'file'
+        ? '📎 檔案附件'
+        : '📝 複製文字';
+
+    const lines = [`#### [${badge}] ${item.title}`];
+    if (item.url) lines.push(`- 網頁連結 URL：${item.url}`);
+    if (item.file_name) lines.push(`- 檔案附件名稱：${item.file_name}`);
+    if (item.content) lines.push(`- 內容摘錄：\n${item.content}`);
+    if (item.type === 'file') {
+      const fileDecoded = this.extractDecodedFileText(item);
+      if (fileDecoded) {
+        lines.push(`- 檔案內文全文摘錄：\n${fileDecoded}`);
+      }
+    }
+    if (Array.isArray(item.tags) && item.tags.length > 0) {
+      lines.push(`- 標籤：#${item.tags.join(' #')}`);
+    }
+
+    return {
+      id: `vault_${item.id}`,
+      badge,
+      label: `${item.title}${item.url ? ` (${item.url.slice(0, 38)}...)` : item.file_name ? ` [檔案: ${item.file_name}]` : ''}`,
+      sublabel: item.content ? item.content.slice(0, 75) + (item.content.length > 75 ? '...' : '') : '',
+      text: lines.join('\n'),
+      checked: defaultChecked,
+      vaultFileId: item.type === 'file' ? item.id : null
+    };
+  }
+
+  extractDecodedFileText(item) {
+    if (!item || !item.file_data) return '';
+    try {
+      if (item.file_data.startsWith('data:text/')) {
+        const commaIdx = item.file_data.indexOf(',');
+        if (commaIdx > 0) {
+          const meta = item.file_data.slice(0, commaIdx);
+          const rawData = item.file_data.slice(commaIdx + 1);
+          if (meta.includes(';base64')) {
+            return decodeURIComponent(escape(atob(rawData)));
+          }
+          return decodeURIComponent(rawData);
+        }
+      }
+    } catch (e) {
+      console.warn('解析文字檔案內容略過', e);
+    }
+    return '';
+  }
+
+  openGeminiModal(pageTitle, entries) {
+    this.geminiPageTitle = pageTitle;
+    this.geminiEntries = entries;
+    document.getElementById('geminiModalHeaderTitle').textContent = `連結 Gemini 新對話 — ${pageTitle}`;
+    this.renderGeminiCheckList();
+    this.rebuildGeminiPromptPreview();
+    document.getElementById('geminiModal').classList.add('open');
+  }
+
+  closeGeminiModal() {
+    document.getElementById('geminiModal').classList.remove('open');
+  }
+
+  renderGeminiCheckList() {
+    const listEl = document.getElementById('geminiCheckList');
+    listEl.innerHTML = (this.geminiEntries || [])
+      .map(
+        (entry, idx) => `
+        <label class="gemini-check-item">
+          <input
+            type="checkbox"
+            ${entry.checked ? 'checked' : ''}
+            onchange="app.onGeminiCheckChange(${idx}, this.checked)"
+          />
+          <div style="flex: 1; overflow: hidden;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span class="tag-chip" style="font-weight: 600; color: #b91c1c; background: #fef2f2;">${this.escapeHtml(entry.badge)}</span>
+              <span style="font-weight: 600; font-size: 13px; color: var(--text-primary);">${this.escapeHtml(entry.label)}</span>
+            </div>
+            ${
+              entry.sublabel
+                ? `<div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">${this.escapeHtml(entry.sublabel)}</div>`
+                : ''
+            }
+          </div>
+        </label>
+      `
+      )
+      .join('');
+  }
+
+  onGeminiCheckChange(idx, isChecked) {
+    if (this.geminiEntries && this.geminiEntries[idx]) {
+      this.geminiEntries[idx].checked = isChecked;
+      this.rebuildGeminiPromptPreview();
+    }
+  }
+
+  toggleAllGeminiChecks(checked) {
+    (this.geminiEntries || []).forEach((e) => {
+      e.checked = checked;
+    });
+    this.renderGeminiCheckList();
+    this.rebuildGeminiPromptPreview();
+  }
+
+  rebuildGeminiPromptPreview() {
+    const checkedEntries = (this.geminiEntries || []).filter((e) => e.checked);
+    const hasFileChecked = checkedEntries.some((e) => !!e.vaultFileId);
+    const fileBar = document.getElementById('geminiFileAttachmentBar');
+    if (fileBar) {
+      fileBar.style.display = hasFileChecked ? 'flex' : 'none';
+    }
+
+    const roleMode = document.getElementById('geminiPromptRoleSelect').value;
+    let roleHeader = '';
+    let roleFooter = '';
+
+    if (roleMode === 'policy') {
+      roleHeader = `你好 Gemini！我是一位國民小學校長。以下是我從個人知識庫（${this.geminiPageTitle}）中精選整理的資料（包含標題、內容摘錄、參考網頁連結與檔案附件資訊）：\n\n`;
+      roleFooter = `\n\n---\n【請協助我進行討論與規劃】：\n請根據以上我勾選的資料，幫我系統化提煉出「身為國小校長要帶領學校推動的具體政策與策略方向」（包含：1. 核心願景與痛點分析、2. 短中長期推動策略、3. 各處室與教師團隊的引導作法），並與我展開深度討論。`;
+    } else if (roleMode === 'office') {
+      roleHeader = `你好 Gemini！我是一位國民小學校長。以下是我整理的校務資料（來源：${this.geminiPageTitle}）：\n\n`;
+      roleFooter = `\n\n---\n【請協助我進行處室分工規劃】：\n請根據以上資料，幫我轉化為國小「教務處、學務處、總務處、輔導室」四處室的協作分工表、學期重要里程碑與具體檢核指標。`;
+    } else if (roleMode === 'speech') {
+      roleHeader = `你好 Gemini！我是一位國民小學校長。以下是我準備推動的校務重點與參考素材（來源：${this.geminiPageTitle}）：\n\n`;
+      roleFooter = `\n\n---\n【請協助我撰寫宣講致詞】：\n請根據以上資料，為我草擬一篇對全校教師晨會（或行政主管會報）約 3 分鐘、兼具教育溫度、同理心與清楚方向感的校長談話稿。`;
+    } else if (roleMode === 'review') {
+      roleHeader = `你好 Gemini！請擔任資深教育政策與校務經營顧問。以下是我身為國小校長目前規劃的資料與策略（來源：${this.geminiPageTitle}）：\n\n`;
+      roleFooter = `\n\n---\n【請協助我進行策略盲點健檢】：\n請審視以上內容，指出在國小現場推動時可能遇到的潛在風險、老師或家長可能的疑慮，並提供具體的減壓與配套建議。`;
+    } else {
+      roleHeader = `【校長知識庫匯出資料：${this.geminiPageTitle}】\n\n`;
+      roleFooter = `\n\n---\n請先閱讀以上我整理的資料，接下來我將針對這些內容與你進行討論。`;
+    }
+
+    const bodyText =
+      checkedEntries.length === 0
+        ? '（尚未勾選任何資料項目，請於上方勾選）'
+        : checkedEntries.map((e) => e.text).join('\n\n---\n\n');
+
+    document.getElementById('geminiPromptPreview').value = `${roleHeader}${bodyText}${roleFooter}`;
+  }
+
+  downloadCheckedGeminiFiles() {
+    const checkedFileIds = (this.geminiEntries || [])
+      .filter((e) => e.checked && e.vaultFileId)
+      .map((e) => e.vaultFileId);
+    if (checkedFileIds.length === 0) return;
+    checkedFileIds.forEach((id) => this.downloadVaultFile(id));
+    this.showToast(`📎 已觸發下載 ${checkedFileIds.length} 個附件檔，可拖曳至 Gemini 對話框上傳！`);
+  }
+
+  copyGeminiPromptOnly() {
+    const promptText = document.getElementById('geminiPromptPreview').value;
+    navigator.clipboard.writeText(promptText);
+    this.showToast('📋 已將勾選的討論內容複製到剪貼簿！');
+  }
+
+  async launchGeminiWithPrompt() {
+    const promptText = document.getElementById('geminiPromptPreview').value.trim();
+    if (!promptText) {
+      alert('請至少勾選一項要討論的資料內容！');
+      return;
+    }
+
+    // 1. 先將完整無截斷的內容複製到剪貼簿
+    try {
+      await navigator.clipboard.writeText(promptText);
+    } catch (e) {
+      const textarea = document.getElementById('geminiPromptPreview');
+      textarea.select();
+      document.execCommand('copy');
+    }
+
+    // 2. 開啟 Gemini 新對話視窗（同時帶入 URL 參數與剪貼簿雙重保障）
+    const encodedPrompt = encodeURIComponent(promptText.slice(0, 1800));
+    const geminiUrl = `https://gemini.google.com/app?q=${encodedPrompt}`;
+    window.open(geminiUrl, '_blank');
+
+    this.closeGeminiModal();
+    this.showToast('🚀 已複製勾選內容並開啟 Gemini 新對話！在 Gemini 按 Ctrl+V 貼上即可立即討論');
+  }
   showToast(message) {
     const container = document.getElementById('toastContainer');
     const el = document.createElement('div');

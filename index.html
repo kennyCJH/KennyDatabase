@@ -233,9 +233,14 @@
           </label>
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn" onclick="app.closeVaultModal()">取消</button>
-        <button id="vaultSaveBtn" class="btn btn-primary" onclick="app.saveVaultModal()">💾 儲存資料</button>
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn btn-gemini-red" onclick="app.openGeminiFromVaultModal()">
+          ✨ 連結 Gemini 討論此資料
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn" onclick="app.closeVaultModal()">取消</button>
+          <button id="vaultSaveBtn" class="btn btn-primary" onclick="app.saveVaultModal()">💾 儲存資料</button>
+        </div>
       </div>
     </div>
   </div>
@@ -380,6 +385,70 @@
       <div class="modal-footer">
         <button class="btn" onclick="app.closeDomainManagerModal()">取消</button>
         <button class="btn btn-primary" onclick="app.saveDomainManager()">💾 儲存分類變更</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       Modal 5: 連結 Gemini 新對話 — 勾選本頁資料與討論視窗
+       ======================================================================== -->
+  <div id="geminiModal" class="modal-backdrop">
+    <div class="modal-panel" style="max-width: 740px;">
+      <div class="modal-header" style="background: #fef2f2; border-bottom-color: #fecaca;">
+        <div class="modal-title" style="color: #b91c1c; display: flex; align-items: center; gap: 8px;">
+          <span>✨</span>
+          <span id="geminiModalHeaderTitle">勾選本頁資料並傳送至 Gemini 新對話討論</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="app.closeGeminiModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <div style="font-size: 12.5px; color: var(--text-secondary);">
+            請勾選您要帶入 Gemini 進行討論的**標題、內容摘錄、網頁連結/書籤、檔案附件**項目：
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" class="btn btn-sm" onclick="app.toggleAllGeminiChecks(true)">☑ 全選</button>
+            <button type="button" class="btn btn-sm" onclick="app.toggleAllGeminiChecks(false)">☐ 全部取消</button>
+          </div>
+        </div>
+
+        <!-- 勾選清單容器 -->
+        <div id="geminiCheckList" class="gemini-check-list"></div>
+
+        <!-- 若包含實體檔案，提供一鍵下載以便拖入 Gemini -->
+        <div id="geminiFileAttachmentBar" style="display: none; align-items: center; justify-content: space-between; padding: 8px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: var(--radius-sm); font-size: 12.5px; color: #92400e;">
+          <span>📎 已勾選項目包含上傳之檔案附件（文字內容已自動摘錄；若為 PDF/Office 檔亦可下載後拖曳至 Gemini 對話框）</span>
+          <button type="button" class="btn btn-sm" onclick="app.downloadCheckedGeminiFiles()">⬇️ 下載勾選的附件檔</button>
+        </div>
+
+        <!-- 選擇希望 Gemini 協助的討論方向 -->
+        <div class="form-group">
+          <label class="form-label">🎯 選擇要與 Gemini 進行的討論指令方向（可自由切換）</label>
+          <select id="geminiPromptRoleSelect" class="form-select" onchange="app.rebuildGeminiPromptPreview()">
+            <option value="policy">🧭 提煉治校政策：請根據以上資料，幫我規劃身為國小校長要帶領學校推動的具體政策與策略方向</option>
+            <option value="office">🏛️ 四處室分工表：請將以上資料轉化為國小「教務、學務、總務、輔導」四處室的具體執行步驟與期程檢核表</option>
+            <option value="speech">🎤 晨會/會議講稿：請根據以上資料，為我撰寫一篇對全校教師或處室主任充滿教育溫度與方向感的宣講致詞</option>
+            <option value="review">🔍 策略盲點健檢：請以教育專家與資深校長顧問角度，分析以上資料的潛在執行風險、教師阻力與解決配套</option>
+            <option value="raw">💬 僅帶入勾選資料：不加預設指令，直接帶入資料讓我自由向 Gemini 提問</option>
+          </select>
+        </div>
+
+        <!-- 即時組合預覽 (可手動微調) -->
+        <div class="form-group">
+          <label class="form-label">📝 即將丟入 Gemini 新對話的完整內容預覽（可在此直接補充或修改）</label>
+          <textarea id="geminiPromptPreview" class="form-textarea" style="min-height: 135px; font-size: 12.5px; background: var(--bg-app);"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap;">
+        <div style="font-size: 12px; color: var(--text-muted);">
+          💡 點擊紅色按鈕將自動複製完整勾選內容並開啟 Gemini 新對話視窗（直接 `Ctrl+V` 貼上即可開始對話）
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn" onclick="app.copyGeminiPromptOnly()">📋 僅複製內容</button>
+          <button type="button" class="btn btn-gemini-red" onclick="app.launchGeminiWithPrompt()">
+            🚀 確認勾選內容，丟入 Gemini 新對話
+          </button>
+        </div>
       </div>
     </div>
   </div>
