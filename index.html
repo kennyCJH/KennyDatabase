@@ -127,8 +127,8 @@
       <div class="sidebar-footer">
         <div class="cloud-status-bar" onclick="app.openCloudSettingsModal()">
           <div>
-            <span id="cloudStatusDot" class="status-indicator local"></span>
-            <span id="cloudStatusText">本地儲存模式 (點擊設雲端)</span>
+            <span id="cloudStatusDot" class="status-indicator online"></span>
+            <span id="cloudStatusText">跨電腦自動雲端同步已連線</span>
           </div>
           <span style="color: var(--text-muted); font-size: 11px;">設定 ➔</span>
         </div>
@@ -161,6 +161,7 @@
             />
             <span class="kbd-pill">Ctrl+K</span>
           </div>
+          <button class="btn btn-sm" onclick="app.manualCloudSync()" title="立即將修改同步至跨電腦雲端">🔄 雲端同步</button>
           <button class="btn" onclick="app.openVaultModal()">+ 新增資料</button>
           <button class="btn btn-primary" onclick="app.createNewStrategyPage()">🧭 建立策略分頁</button>
           <button class="btn btn-ghost btn-sm" onclick="app.handlePrincipalLock()" title="鎖定工作台並登出">🔒 鎖定</button>

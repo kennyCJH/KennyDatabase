@@ -72,19 +72,37 @@ class KennyApp {
     document.getElementById('principalAuthGate').style.display = 'none';
     document.getElementById('appRoot').style.display = 'flex';
 
-    // 初始化雲端自動同步（若已設定 Supabase）
     this.refreshHeaderAndCloudBadge();
-    if (this.store.isCloudConnected) {
-      try {
-        await this.store.syncFromCloud();
-        this.showToast('☁️ 已自動從 Supabase 雲端同步最新資料');
-      } catch (e) {
-        console.warn('初次雲端同步略過:', e);
-      }
-    }
-
     this.bindKeyboardShortcuts();
     this.renderAll();
+
+    // 自動從跨裝置雲端同步最新資料並開啟即時雙向監聽
+    try {
+      await this.store.syncFromCloud(true);
+      this.refreshHeaderAndCloudBadge();
+      this.renderAll();
+      this.showToast('☁️ 已自動同步跨電腦雲端最新資料');
+    } catch (e) {
+      console.warn('初次雲端同步略過:', e);
+    }
+
+    this.store.startRealtimeListener(() => {
+      this.refreshHeaderAndCloudBadge();
+      this.renderAll();
+      this.showToast('🔄 已即時收到來自其他電腦的雲端更新！');
+    });
+  }
+
+  async manualCloudSync() {
+    this.showToast('⏳ 正在與雲端雙向同步最新資料...');
+    try {
+      await this.store.pushAllLocalToCloud();
+      this.refreshHeaderAndCloudBadge();
+      this.renderAll();
+      this.showToast('✅ 已將本機最新修改同步上傳至雲端！所有電腦皆可讀取');
+    } catch (e) {
+      this.showToast('⚠️ 雲端同步異常：' + e.message);
+    }
   }
 
   bindKeyboardShortcuts() {
@@ -104,12 +122,12 @@ class KennyApp {
 
     const dot = document.getElementById('cloudStatusDot');
     const txt = document.getElementById('cloudStatusText');
-    if (this.store.isCloudConnected) {
+    if (this.store.cloudMode === 'supabase') {
       dot.className = 'status-indicator online';
       txt.textContent = 'Supabase 雲端同步已連線';
     } else {
-      dot.className = 'status-indicator local';
-      txt.textContent = '本地儲存模式 (點擊設雲端)';
+      dot.className = 'status-indicator online';
+      txt.textContent = '跨電腦自動雲端同步已連線';
     }
   }
 
