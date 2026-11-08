@@ -259,7 +259,18 @@ class KennyApp {
     }
 
     if (this.typeFilter !== 'all') {
-      filtered = filtered.filter((i) => i.type === this.typeFilter);
+      if (this.typeFilter === 'file') {
+        filtered = filtered.filter(
+          (i) =>
+            i.type === 'file' ||
+            (Array.isArray(i.files) && i.files.length > 0) ||
+            !!i.file_name
+        );
+      } else if (this.typeFilter === 'link') {
+        filtered = filtered.filter((i) => i.type === 'link' || !!i.url);
+      } else {
+        filtered = filtered.filter((i) => i.type === this.typeFilter);
+      }
     }
 
     if (this.searchQuery) {
@@ -401,12 +412,12 @@ class KennyApp {
             <td style="width: 95px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);">${dateStr}</td>
             <td style="width: 110px; text-align: right;" onclick="event.stopPropagation();">
               ${
-                item.type === 'link' && item.url
+                item.url && item.type === 'link'
                   ? `<a href="${this.escapeHtml(item.url)}" target="_blank" class="btn btn-sm" title="開啟連結">↗</a>`
                   : ''
               }
               ${
-                item.type === 'file'
+                item.type === 'file' || (Array.isArray(item.files) && item.files.length > 0) || item.file_name
                   ? `<button class="btn btn-sm" onclick="app.downloadVaultFile('${item.id}')" title="下載檔案">⬇️</button>`
                   : ''
               }
@@ -480,7 +491,7 @@ class KennyApp {
                       : ''
                   }
                   ${
-                    item.type === 'file'
+                    item.type === 'file' || (Array.isArray(item.files) && item.files.length > 0) || item.file_name
                       ? `<button class="btn btn-sm" onclick="app.downloadVaultFile('${item.id}')">⬇️ 下載 (${this.escapeHtml(item.file_name || '附件')})</button>`
                       : ''
                   }
@@ -532,6 +543,7 @@ class KennyApp {
       file_size: 0,
       file_type: '',
       file_data: '',
+      files: [],
       domain: domainSelect ? domainSelect.value : 'vision',
       tags: ['快速收集'],
       is_starred: false,
@@ -545,32 +557,41 @@ class KennyApp {
   }
 
   async handleQuickFileUpload(event) {
-    const file = event.target.files && event.target.files[0];
-    if (!file) return;
+    const fileList = event.target.files ? Array.from(event.target.files) : [];
+    if (fileList.length === 0) return;
+    event.target.value = '';
     const domainSelect = document.getElementById('quickCaptureDomain');
 
-    this.showToast(`⏳ 正在處理檔案：${file.name}...`);
-    const uploaded = await this.store.uploadFile(file);
+    for (const file of fileList) {
+      const uploaded = await this.store.uploadFile(file);
+      const fileEntry = {
+        id: uploaded.id || 'file_' + Date.now(),
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        url: uploaded.url || '',
+        data: uploaded.file_data || ''
+      };
+      const newItem = {
+        id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        type: 'file',
+        title: file.name,
+        content: `檔案大小：${(file.size / 1024).toFixed(1)} KB`,
+        url: uploaded.url || '',
+        file_name: file.name,
+        file_size: file.size,
+        file_type: file.type || 'application/octet-stream',
+        file_data: uploaded.file_data || '',
+        files: [fileEntry],
+        domain: domainSelect ? domainSelect.value : 'vision',
+        tags: ['檔案附件'],
+        is_starred: false,
+        is_inbox: this.currentNav === 'inbox'
+      };
+      await this.store.upsertVaultItem(newItem);
+    }
 
-    const newItem = {
-      id: 'item_' + Date.now(),
-      type: 'file',
-      title: file.name,
-      content: `檔案大小：${(file.size / 1024).toFixed(1)} KB`,
-      url: uploaded.url || '',
-      file_name: file.name,
-      file_size: file.size,
-      file_type: file.type || 'application/octet-stream',
-      file_data: uploaded.file_data || '',
-      domain: domainSelect ? domainSelect.value : 'vision',
-      tags: ['檔案附件'],
-      is_starred: false,
-      is_inbox: this.currentNav === 'inbox'
-    };
-
-    await this.store.upsertVaultItem(newItem);
-    event.target.value = '';
-    this.showToast(`📎 檔案「${file.name}」已存入資料庫！`);
+    this.showToast(`📎 已成功將 ${fileList.length} 個檔案存入資料庫！`);
     this.renderAll();
   }
 
@@ -590,17 +611,19 @@ class KennyApp {
     this.renderAll();
   }
 
-  downloadVaultFile(id) {
+  async downloadVaultFile(id) {
     const item = this.store.getVaultItems().find((i) => i.id === id);
     if (!item) return;
-    const href = item.url || item.file_data;
+    const files = this.getNormalizedItemFiles(item);
+    const target = files.length > 0 ? files[0] : item;
+    const href = await this.store.resolveFileDownloadHref(target);
     if (!href) {
-      alert('此檔案尚無可下載的實體內容，請重新上傳檔案或設定雲端連結。');
+      alert('此檔案尚無可下載的實體內容，請重新上傳檔案。');
       return;
     }
     const a = document.createElement('a');
     a.href = href;
-    a.download = item.file_name || item.title || 'download';
+    a.download = target.name || item.file_name || item.title || 'download';
     a.target = '_blank';
     document.body.appendChild(a);
     a.click();
@@ -668,7 +691,7 @@ class KennyApp {
       document.getElementById('vaultModalTitle').textContent = '新增資料至校長知識庫';
       document.getElementById('vaultItemId').value = '';
       this.modalFiles = [];
-      this.selectVaultModalType('snippet');
+      this.selectVaultModalType(this.typeFilter === 'file' ? 'file' : 'snippet');
       document.getElementById('vaultItemTitle').value = '';
       document.getElementById('vaultItemUrl').value = '';
       document.getElementById('vaultItemContent').value = '';
@@ -694,16 +717,15 @@ class KennyApp {
       const btn = document.getElementById(`typeBtn_${t}`);
       if (btn) btn.classList.toggle('btn-primary', t === type);
     });
-    document.getElementById('vaultUrlGroup').style.display = type === 'link' ? 'flex' : 'none';
-    // 當選擇「檔案附件上傳」或該項目已有附加檔案時，顯示檔案管理區塊
-    const hasFiles = Array.isArray(this.modalFiles) && this.modalFiles.length > 0;
-    document.getElementById('vaultFileGroup').style.display =
-      type === 'file' || hasFiles ? 'flex' : 'none';
+    // 始終顯示網址與檔案上傳區塊，讓任何筆記或項目皆可隨時加入連結與多個檔案附件
+    document.getElementById('vaultUrlGroup').style.display = 'flex';
+    document.getElementById('vaultFileGroup').style.display = 'flex';
   }
 
   async handleModalFileSelect(event) {
     const fileList = event.target.files ? Array.from(event.target.files) : [];
     if (fileList.length === 0) return;
+    event.target.value = '';
 
     this.modalFiles = this.modalFiles || [];
     const titleInput = document.getElementById('vaultItemTitle');
@@ -711,10 +733,15 @@ class KennyApp {
       titleInput.value = fileList[0].name;
     }
 
+    // 若原本停留在一般文字標籤且無網址，自動切換類型標記為「📎 檔案附件上傳」
+    if (this.modalCurrentType === 'snippet' && !document.getElementById('vaultItemUrl').value.trim()) {
+      this.selectVaultModalType('file');
+    }
+
     for (const file of fileList) {
       const uploaded = await this.store.uploadFile(file);
       this.modalFiles.push({
-        id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        id: uploaded.id || 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         name: file.name,
         size: file.size,
         type: file.type || 'application/octet-stream',
@@ -724,9 +751,44 @@ class KennyApp {
       });
     }
 
-    event.target.value = '';
     this.renderModalFileList();
-    this.showToast(`📎 已加入 ${fileList.length} 個檔案至清單（可勾選管理或刪除）`);
+    await this.autoPersistModalFilesIfEditing();
+    this.showToast(`📎 已成功加入 ${fileList.length} 個檔案！`);
+  }
+
+  async autoPersistModalFilesIfEditing() {
+    const existingId = document.getElementById('vaultItemId').value;
+    if (!existingId) return;
+    const existing = this.store.getVaultItems().find((i) => i.id === existingId);
+    if (!existing) return;
+
+    const cleanFiles = (this.modalFiles || []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      url: f.url,
+      data: f.data
+    }));
+
+    existing.files = cleanFiles;
+    if (cleanFiles.length > 0) {
+      existing.file_name =
+        cleanFiles.length === 1
+          ? cleanFiles[0].name
+          : `${cleanFiles[0].name} 等 ${cleanFiles.length} 個檔案`;
+      existing.file_size = cleanFiles.reduce((s, f) => s + (f.size || 0), 0);
+      existing.file_type = cleanFiles[0].type || 'application/octet-stream';
+      existing.file_data = cleanFiles[0].data || '';
+    } else {
+      existing.file_name = '';
+      existing.file_size = 0;
+      existing.file_type = '';
+      existing.file_data = '';
+    }
+
+    await this.store.upsertVaultItem(existing);
+    this.renderAll();
   }
 
   renderModalFileList() {
@@ -742,7 +804,7 @@ class KennyApp {
     if (this.modalFiles.length === 0) {
       container.innerHTML = `
         <div style="font-size: 12px; color: var(--text-muted); padding: 8px 10px; background: var(--bg-app); border: 1px dashed var(--border-color); border-radius: var(--radius-sm);">
-          目前尚無附加檔案。請點擊上方「選擇檔案」上傳（可一次選取或分批加入多個檔案）。
+          目前尚無附加檔案。請點擊上方「➕ 選擇並加入檔案」或檔案選擇器加入檔案。
         </div>
       `;
       return;
@@ -751,7 +813,7 @@ class KennyApp {
     container.innerHTML = this.modalFiles
       .map(
         (f, idx) => `
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: var(--bg-app); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius-sm);">
           <label style="display: flex; align-items: center; gap: 8px; flex: 1; cursor: pointer; overflow: hidden;">
             <input
               type="checkbox"
@@ -759,6 +821,7 @@ class KennyApp {
               onchange="app.toggleModalFileCheck(${idx}, this.checked)"
               style="width: 15px; height: 15px; accent-color: #dc2626; cursor: pointer;"
             />
+            <span style="font-size: 11px; font-weight: 700; color: #15803d; background: #dcfce7; padding: 1px 6px; border-radius: 4px; flex-shrink: 0;">✓ 已加入</span>
             <span style="font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
               📎 ${this.escapeHtml(f.name)}
             </span>
@@ -767,11 +830,7 @@ class KennyApp {
             </span>
           </label>
           <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-            ${
-              f.url || f.data
-                ? `<button type="button" class="btn btn-sm" onclick="app.downloadModalFile(${idx})" title="下載此檔案">⬇️ 下載</button>`
-                : ''
-            }
+            <button type="button" class="btn btn-sm" onclick="app.downloadModalFile(${idx})" title="下載此檔案">⬇️ 下載</button>
             <button
               type="button"
               class="btn btn-sm"
@@ -803,7 +862,7 @@ class KennyApp {
     this.renderModalFileList();
   }
 
-  deleteSelectedModalFiles() {
+  async deleteSelectedModalFiles() {
     if (!this.modalFiles || this.modalFiles.length === 0) return;
     const checkedCount = this.modalFiles.filter((f) => f.checked).length;
     if (checkedCount === 0) {
@@ -813,22 +872,24 @@ class KennyApp {
     if (!confirm(`確定要刪除已勾選的 ${checkedCount} 個檔案嗎？`)) return;
     this.modalFiles = this.modalFiles.filter((f) => !f.checked);
     this.renderModalFileList();
-    this.showToast(`🗑️ 已移除所選的 ${checkedCount} 個檔案（點擊「儲存資料」即生效）`);
+    await this.autoPersistModalFilesIfEditing();
+    this.showToast(`🗑️ 已刪除所選的 ${checkedCount} 個檔案`);
   }
 
-  deleteSingleModalFile(idx) {
+  async deleteSingleModalFile(idx) {
     if (!this.modalFiles || !this.modalFiles[idx]) return;
     const targetName = this.modalFiles[idx].name;
     if (!confirm(`確定要刪除檔案「${targetName}」嗎？`)) return;
     this.modalFiles.splice(idx, 1);
     this.renderModalFileList();
-    this.showToast(`🗑️ 已移除檔案「${targetName}」（點擊「儲存資料」即生效）`);
+    await this.autoPersistModalFilesIfEditing();
+    this.showToast(`🗑️ 已刪除檔案「${targetName}」`);
   }
 
-  downloadModalFile(idx) {
+  async downloadModalFile(idx) {
     if (!this.modalFiles || !this.modalFiles[idx]) return;
     const f = this.modalFiles[idx];
-    const href = f.url || f.data;
+    const href = await this.store.resolveFileDownloadHref(f);
     if (!href) {
       alert('此檔案尚無可下載的實體內容');
       return;
@@ -845,12 +906,6 @@ class KennyApp {
   async saveVaultModal() {
     const id = document.getElementById('vaultItemId').value || 'item_' + Date.now();
     const existing = this.store.getVaultItems().find((i) => i.id === id) || {};
-    const title = document.getElementById('vaultItemTitle').value.trim();
-    if (!title) {
-      alert('請輸入標題');
-      return;
-    }
-
     const cleanFiles = (this.modalFiles || []).map((f) => ({
       id: f.id,
       name: f.name,
@@ -860,11 +915,21 @@ class KennyApp {
       data: f.data
     }));
 
+    let title = document.getElementById('vaultItemTitle').value.trim();
+    if (!title && cleanFiles.length > 0) {
+      title = cleanFiles[0].name;
+    }
+    if (!title) {
+      alert('請輸入標題或選擇要加入的檔案');
+      return;
+    }
+
     let url = document.getElementById('vaultItemUrl').value.trim();
     let file_name = '';
     let file_size = 0;
     let file_type = '';
     let file_data = '';
+    let finalType = this.modalCurrentType;
 
     if (cleanFiles.length > 0) {
       file_name =
@@ -874,10 +939,13 @@ class KennyApp {
       file_size = cleanFiles.reduce((sum, f) => sum + (f.size || 0), 0);
       file_type = cleanFiles[0].type || 'application/octet-stream';
       file_data = cleanFiles[0].data || '';
-      if (this.modalCurrentType === 'file' && !url) {
+      if (!url && finalType === 'snippet') {
+        finalType = 'file';
+      }
+      if (finalType === 'file' && !url) {
         url = cleanFiles[0].url || '';
       }
-    } else if (this.modalCurrentType === 'file') {
+    } else if (finalType === 'file') {
       url = '';
     }
 
@@ -890,7 +958,7 @@ class KennyApp {
     const item = {
       ...existing,
       id,
-      type: this.modalCurrentType,
+      type: finalType,
       title,
       content: document.getElementById('vaultItemContent').value,
       url,
@@ -907,7 +975,7 @@ class KennyApp {
 
     await this.store.upsertVaultItem(item);
     this.closeVaultModal();
-    this.showToast('💾 資料與檔案清單已儲存至知識庫');
+    this.showToast('💾 資料與檔案清單已成功儲存！');
     this.renderAll();
   }
 
@@ -1298,16 +1366,16 @@ class KennyApp {
     this.renderWorkspace();
   }
 
-  downloadSpecificItemFile(itemId, fileIdx) {
+  async downloadSpecificItemFile(itemId, fileIdx) {
     const item = this.store.getVaultItems().find((i) => i.id === itemId);
     if (!item) return;
     const files = this.getNormalizedItemFiles(item);
     const f = files[fileIdx];
     if (!f) {
-      this.downloadVaultFile(itemId);
+      await this.downloadVaultFile(itemId);
       return;
     }
-    const href = f.url || f.data;
+    const href = await this.store.resolveFileDownloadHref(f);
     if (!href) {
       alert('此檔案尚無可下載的實體內容');
       return;

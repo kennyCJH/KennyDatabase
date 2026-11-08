@@ -198,19 +198,28 @@
           <input type="text" id="vaultItemTitle" class="form-input" placeholder="例如：教育部 AI 數位學習精進方案要點、友校空間改造案例..." />
         </div>
 
-        <div id="vaultUrlGroup" class="form-group" style="display: none;">
-          <label class="form-label">網頁連結 URL (或 Google 雲端硬碟檔案分享網址)</label>
+        <div id="vaultUrlGroup" class="form-group" style="display: flex;">
+          <label class="form-label">🔗 網頁連結 URL（選填，或貼上 Google 雲端硬碟分享網址）</label>
           <input type="url" id="vaultItemUrl" class="form-input" placeholder="https://..." />
         </div>
 
-        <div id="vaultFileGroup" class="form-group" style="display: none;">
+        <div id="vaultFileGroup" class="form-group" style="display: flex;">
           <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;">
-            <label class="form-label">📎 檔案附件上傳（支援多選上傳 PDF、Word、簡報、Markdown、圖片等）</label>
-            <div id="vaultFileBatchActions" style="display: none; gap: 6px;">
-              <button type="button" class="btn btn-sm" onclick="app.toggleSelectAllModalFiles()">☑ 全選 / 取消</button>
-              <button type="button" class="btn btn-sm" style="color: #dc2626; border-color: #fecaca; background: #fef2f2;" onclick="app.deleteSelectedModalFiles()">
-                🗑️ 刪除勾選的檔案
+            <label class="form-label">📎 檔案附件上傳（支援多選上傳 PDF、Word、簡報、Excel、Markdown、圖片等）</label>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button
+                type="button"
+                class="btn btn-blue btn-sm"
+                onclick="document.getElementById('vaultItemFileInput').click()"
+              >
+                ➕ 選擇並加入檔案
               </button>
+              <div id="vaultFileBatchActions" style="display: none; gap: 6px;">
+                <button type="button" class="btn btn-sm" onclick="app.toggleSelectAllModalFiles()">☑ 全選 / 取消</button>
+                <button type="button" class="btn btn-sm" style="color: #dc2626; border-color: #fecaca; background: #fef2f2;" onclick="app.deleteSelectedModalFiles()">
+                  🗑️ 刪除勾選的檔案
+                </button>
+              </div>
             </div>
           </div>
           <input type="file" id="vaultItemFileInput" class="form-input" multiple onchange="app.handleModalFileSelect(event)" />
