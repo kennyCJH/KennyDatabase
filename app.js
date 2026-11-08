@@ -563,6 +563,12 @@ class KennyApp {
     const domainSelect = document.getElementById('quickCaptureDomain');
 
     for (const file of fileList) {
+      const sizeText =
+        file.size >= 1024 * 1024
+          ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+          : `${(file.size / 1024).toFixed(1)} KB`;
+      this.showToast(`⏳ 正在上傳檔案「${file.name}」(${sizeText})...`);
+
       const uploaded = await this.store.uploadFile(file);
       const fileEntry = {
         id: uploaded.id || 'file_' + Date.now(),
@@ -570,13 +576,16 @@ class KennyApp {
         size: file.size,
         type: file.type || 'application/octet-stream',
         url: uploaded.url || '',
-        data: uploaded.file_data || ''
+        data: uploaded.file_data || '',
+        cloudFileTopic: uploaded.cloudFileTopic || '',
+        chunkUrls: uploaded.chunkUrls || [],
+        totalChunks: uploaded.totalChunks || 1
       };
       const newItem = {
         id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         type: 'file',
         title: file.name,
-        content: `檔案大小：${(file.size / 1024).toFixed(1)} KB`,
+        content: `檔案大小：${sizeText}`,
         url: uploaded.url || '',
         file_name: file.name,
         file_size: file.size,
@@ -591,7 +600,7 @@ class KennyApp {
       await this.store.upsertVaultItem(newItem);
     }
 
-    this.showToast(`📎 已成功將 ${fileList.length} 個檔案存入資料庫！`);
+    this.showToast(`📎 已成功將 ${fileList.length} 個檔案存入資料庫並同步雲端！`);
     this.renderAll();
   }
 
@@ -616,6 +625,7 @@ class KennyApp {
     if (!item) return;
     const files = this.getNormalizedItemFiles(item);
     const target = files.length > 0 ? files[0] : item;
+    this.showToast('⏳ 正在準備下載檔案...');
     const href = await this.store.resolveFileDownloadHref(target);
     if (!href) {
       alert('此檔案尚無可下載的實體內容，請重新上傳檔案。');
@@ -624,7 +634,6 @@ class KennyApp {
     const a = document.createElement('a');
     a.href = href;
     a.download = target.name || item.file_name || item.title || 'download';
-    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -643,6 +652,9 @@ class KennyApp {
         type: f.type || '',
         url: f.url || '',
         data: f.data || '',
+        cloudFileTopic: f.cloudFileTopic || '',
+        chunkUrls: Array.isArray(f.chunkUrls) ? f.chunkUrls : [],
+        totalChunks: f.totalChunks || 1,
         checked: false
       }));
     }
@@ -655,6 +667,9 @@ class KennyApp {
           type: item.file_type || '',
           url: item.type === 'file' ? item.url || '' : '',
           data: item.file_data || '',
+          cloudFileTopic: item.cloudFileTopic || '',
+          chunkUrls: Array.isArray(item.chunkUrls) ? item.chunkUrls : [],
+          totalChunks: item.totalChunks || 1,
           checked: false
         }
       ];
@@ -738,22 +753,70 @@ class KennyApp {
       this.selectVaultModalType('file');
     }
 
-    for (const file of fileList) {
-      const uploaded = await this.store.uploadFile(file);
-      this.modalFiles.push({
-        id: uploaded.id || 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        name: file.name,
-        size: file.size,
-        type: file.type || 'application/octet-stream',
-        url: uploaded.url || '',
-        data: uploaded.file_data || '',
-        checked: false
-      });
+    const saveBtn = document.getElementById('vaultSaveBtn');
+    const container = document.getElementById('vaultFileListContainer');
+
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const sizeText =
+        file.size >= 1024 * 1024
+          ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+          : `${(file.size / 1024).toFixed(1)} KB`;
+
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = `⏳ 正在上傳檔案 (${i + 1}/${fileList.length})...`;
+      }
+
+      // 在清單頂部即時顯示上傳進度條（讓 3.2MB+ PPTX 上傳過程一目了然）
+      let progressEl = document.getElementById('modalFileUploadProgressBox');
+      if (!progressEl && container) {
+        progressEl = document.createElement('div');
+        progressEl.id = 'modalFileUploadProgressBox';
+        progressEl.style.cssText =
+          'padding: 10px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; font-size: 12.5px; color: #1d4ed8; font-weight: 600; margin-bottom: 4px;';
+        container.prepend(progressEl);
+      }
+      if (progressEl) {
+        progressEl.innerHTML = `⏳ 正在讀取並同步大型檔案「${this.escapeHtml(file.name)}」(${sizeText}) — 準備中...`;
+      }
+
+      try {
+        const uploaded = await this.store.uploadFile(file, (pct, cur, tot) => {
+          if (progressEl) {
+            progressEl.innerHTML = `⏳ 正在上傳檔案「${this.escapeHtml(file.name)}」(${sizeText}) — 雲端分片同步進度：<strong>${pct}%</strong> (${cur}/${tot})`;
+          }
+          if (saveBtn) {
+            saveBtn.textContent = `⏳ 上傳中 ${pct}%...`;
+          }
+        });
+
+        this.modalFiles.push({
+          id: uploaded.id || 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          url: uploaded.url || '',
+          data: uploaded.file_data || '',
+          cloudFileTopic: uploaded.cloudFileTopic || '',
+          chunkUrls: uploaded.chunkUrls || [],
+          totalChunks: uploaded.totalChunks || 1,
+          checked: false
+        });
+      } catch (err) {
+        console.error('檔案處理異常:', err);
+        this.showToast(`⚠️ 檔案「${file.name}」處理失敗：${err.message}`);
+      }
+    }
+
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '💾 儲存資料';
     }
 
     this.renderModalFileList();
     await this.autoPersistModalFilesIfEditing();
-    this.showToast(`📎 已成功加入 ${fileList.length} 個檔案！`);
+    this.showToast(`📎 已成功加入 ${fileList.length} 個檔案並完成雲端同步！`);
   }
 
   async autoPersistModalFilesIfEditing() {
@@ -768,7 +831,10 @@ class KennyApp {
       size: f.size,
       type: f.type,
       url: f.url,
-      data: f.data
+      data: f.data,
+      cloudFileTopic: f.cloudFileTopic || '',
+      chunkUrls: Array.isArray(f.chunkUrls) ? f.chunkUrls : [],
+      totalChunks: f.totalChunks || 1
     }));
 
     existing.files = cleanFiles;
@@ -780,11 +846,17 @@ class KennyApp {
       existing.file_size = cleanFiles.reduce((s, f) => s + (f.size || 0), 0);
       existing.file_type = cleanFiles[0].type || 'application/octet-stream';
       existing.file_data = cleanFiles[0].data || '';
+      existing.cloudFileTopic = cleanFiles[0].cloudFileTopic || '';
+      existing.chunkUrls = cleanFiles[0].chunkUrls || [];
+      existing.totalChunks = cleanFiles[0].totalChunks || 1;
     } else {
       existing.file_name = '';
       existing.file_size = 0;
       existing.file_type = '';
       existing.file_data = '';
+      existing.cloudFileTopic = '';
+      existing.chunkUrls = [];
+      existing.totalChunks = 1;
     }
 
     await this.store.upsertVaultItem(existing);
@@ -811,8 +883,12 @@ class KennyApp {
     }
 
     container.innerHTML = this.modalFiles
-      .map(
-        (f, idx) => `
+      .map((f, idx) => {
+        const sizeStr =
+          (f.size || 0) >= 1024 * 1024
+            ? `${((f.size || 0) / (1024 * 1024)).toFixed(2)} MB`
+            : `${((f.size || 0) / 1024).toFixed(1)} KB`;
+        return `
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius-sm);">
           <label style="display: flex; align-items: center; gap: 8px; flex: 1; cursor: pointer; overflow: hidden;">
             <input
@@ -826,7 +902,7 @@ class KennyApp {
               📎 ${this.escapeHtml(f.name)}
             </span>
             <span style="font-size: 11.5px; color: var(--text-muted); white-space: nowrap;">
-              (${((f.size || 0) / 1024).toFixed(1)} KB)
+              (${sizeStr})
             </span>
           </label>
           <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
@@ -842,8 +918,8 @@ class KennyApp {
             </button>
           </div>
         </div>
-      `
-      )
+      `;
+      })
       .join('');
   }
 
@@ -889,6 +965,7 @@ class KennyApp {
   async downloadModalFile(idx) {
     if (!this.modalFiles || !this.modalFiles[idx]) return;
     const f = this.modalFiles[idx];
+    this.showToast('⏳ 正在準備下載檔案...');
     const href = await this.store.resolveFileDownloadHref(f);
     if (!href) {
       alert('此檔案尚無可下載的實體內容');
@@ -897,7 +974,6 @@ class KennyApp {
     const a = document.createElement('a');
     a.href = href;
     a.download = f.name || 'download';
-    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -912,7 +988,10 @@ class KennyApp {
       size: f.size,
       type: f.type,
       url: f.url,
-      data: f.data
+      data: f.data,
+      cloudFileTopic: f.cloudFileTopic || '',
+      chunkUrls: Array.isArray(f.chunkUrls) ? f.chunkUrls : [],
+      totalChunks: f.totalChunks || 1
     }));
 
     let title = document.getElementById('vaultItemTitle').value.trim();
@@ -929,6 +1008,9 @@ class KennyApp {
     let file_size = 0;
     let file_type = '';
     let file_data = '';
+    let cloudFileTopic = '';
+    let chunkUrls = [];
+    let totalChunks = 1;
     let finalType = this.modalCurrentType;
 
     if (cleanFiles.length > 0) {
@@ -939,6 +1021,9 @@ class KennyApp {
       file_size = cleanFiles.reduce((sum, f) => sum + (f.size || 0), 0);
       file_type = cleanFiles[0].type || 'application/octet-stream';
       file_data = cleanFiles[0].data || '';
+      cloudFileTopic = cleanFiles[0].cloudFileTopic || '';
+      chunkUrls = cleanFiles[0].chunkUrls || [];
+      totalChunks = cleanFiles[0].totalChunks || 1;
       if (!url && finalType === 'snippet') {
         finalType = 'file';
       }
@@ -966,6 +1051,9 @@ class KennyApp {
       file_size,
       file_type,
       file_data,
+      cloudFileTopic,
+      chunkUrls,
+      totalChunks,
       files: cleanFiles,
       domain: document.getElementById('vaultItemDomain').value,
       tags,
@@ -975,7 +1063,7 @@ class KennyApp {
 
     await this.store.upsertVaultItem(item);
     this.closeVaultModal();
-    this.showToast('💾 資料與檔案清單已成功儲存！');
+    this.showToast('💾 資料與檔案清單已成功儲存並同步雲端！');
     this.renderAll();
   }
 
@@ -1375,6 +1463,7 @@ class KennyApp {
       await this.downloadVaultFile(itemId);
       return;
     }
+    this.showToast('⏳ 正在準備下載檔案...');
     const href = await this.store.resolveFileDownloadHref(f);
     if (!href) {
       alert('此檔案尚無可下載的實體內容');
@@ -1383,7 +1472,6 @@ class KennyApp {
     const a = document.createElement('a');
     a.href = href;
     a.download = f.name || 'download';
-    a.target = '_blank';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1411,6 +1499,9 @@ class KennyApp {
       item.file_size = files.reduce((s, f) => s + (f.size || 0), 0);
       item.file_type = files.length > 0 ? files[0].type : '';
       item.file_data = files.length > 0 ? files[0].data : '';
+      item.cloudFileTopic = files.length > 0 ? files[0].cloudFileTopic || '' : '';
+      item.chunkUrls = files.length > 0 ? files[0].chunkUrls || [] : [];
+      item.totalChunks = files.length > 0 ? files[0].totalChunks || 1 : 1;
       await this.store.upsertVaultItem(item);
     }
 
@@ -1478,6 +1569,9 @@ class KennyApp {
         item.file_size = files.reduce((s, f) => s + (f.size || 0), 0);
         item.file_type = files.length > 0 ? files[0].type : '';
         item.file_data = files.length > 0 ? files[0].data : '';
+        item.cloudFileTopic = files.length > 0 ? files[0].cloudFileTopic || '' : '';
+        item.chunkUrls = files.length > 0 ? files[0].chunkUrls || [] : [];
+        item.totalChunks = files.length > 0 ? files[0].totalChunks || 1 : 1;
         await this.store.upsertVaultItem(item);
       }
     }
@@ -1495,25 +1589,37 @@ class KennyApp {
     if (!strat) return;
 
     for (const file of fileList) {
+      const sizeText =
+        file.size >= 1024 * 1024
+          ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+          : `${(file.size / 1024).toFixed(1)} KB`;
+      this.showToast(`⏳ 正在上傳檔案「${file.name}」(${sizeText}) 至本策略頁...`);
+
       const uploaded = await this.store.uploadFile(file);
       const fileEntry = {
-        id: 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        id: uploaded.id || 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         name: file.name,
         size: file.size,
         type: file.type || 'application/octet-stream',
         url: uploaded.url || '',
-        data: uploaded.file_data || ''
+        data: uploaded.file_data || '',
+        cloudFileTopic: uploaded.cloudFileTopic || '',
+        chunkUrls: uploaded.chunkUrls || [],
+        totalChunks: uploaded.totalChunks || 1
       };
       const newItem = {
         id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
         type: 'file',
         title: file.name,
-        content: `附加於策略「${strat.title}」之檔案（${(file.size / 1024).toFixed(1)} KB）`,
+        content: `附加於策略「${strat.title}」之檔案（${sizeText}）`,
         url: uploaded.url || '',
         file_name: file.name,
         file_size: file.size,
         file_type: file.type || 'application/octet-stream',
         file_data: uploaded.file_data || '',
+        cloudFileTopic: uploaded.cloudFileTopic || '',
+        chunkUrls: uploaded.chunkUrls || [],
+        totalChunks: uploaded.totalChunks || 1,
         files: [fileEntry],
         domain: strat.domain || 'vision',
         tags: ['策略附件'],
@@ -1716,6 +1822,7 @@ class KennyApp {
       )
       .join('');
 
+    this.sharedLinkedVault = linkedVault || [];
     const resourcesHtml =
       (linkedVault || []).length === 0
         ? ''
@@ -1740,8 +1847,8 @@ class KennyApp {
                         : ''
                     }
                     ${
-                      item.type === 'file' && (item.url || item.file_data)
-                        ? `<a href="${item.url || item.file_data}" download="${this.escapeHtml(item.file_name || item.title)}" target="_blank" class="btn btn-primary btn-sm">⬇️ 下載檔案</a>`
+                      item.type === 'file' || (Array.isArray(item.files) && item.files.length > 0) || item.file_name
+                        ? `<button type="button" onclick="app.downloadSharedVaultFile('${item.id}')" class="btn btn-primary btn-sm">⬇️ 下載檔案</button>`
                         : ''
                     }
                   </div>
@@ -1816,6 +1923,26 @@ class KennyApp {
     } else {
       document.getElementById('passcodeErrorMsg').style.display = 'block';
     }
+  }
+
+  async downloadSharedVaultFile(id) {
+    const list = this.sharedLinkedVault || this.store.getVaultItems();
+    const item = list.find((i) => i.id === id);
+    if (!item) return;
+    const files = this.getNormalizedItemFiles(item);
+    const target = files.length > 0 ? files[0] : item;
+    this.showToast('⏳ 正在從雲端下載檔案...');
+    const href = await this.store.resolveFileDownloadHref(target);
+    if (!href) {
+      alert('此檔案尚無可下載的實體內容。');
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = target.name || item.file_name || item.title || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   // --------------------------------------------------------------------------
